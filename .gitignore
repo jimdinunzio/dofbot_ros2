@@ -1,0 +1,15 @@
+# ROS2 build and install artifacts
+build/
+install/
+log/
+COLCON_IGNORE
+
+# Python caching and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python packaging metadata (Your question)
+*.egg-info/
+.eggs/
+dist/
