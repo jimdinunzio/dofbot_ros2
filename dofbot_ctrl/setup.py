@@ -27,6 +27,7 @@ setup(
         'console_scripts': [
             'joint_state_mirror = dofbot_ctrl.joint_state_mirror:main',
             'gui_teleop = dofbot_ctrl.gui_teleop:main',
+            'calibrate_zero = dofbot_ctrl.calibrate_zero:main',
         ],
     },
 )

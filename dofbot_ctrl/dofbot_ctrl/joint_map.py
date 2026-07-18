@@ -23,11 +23,24 @@ ARM_JOINT_NAMES = ('arm1_Joint', 'arm2_Joint', 'arm3_Joint',
 GRIPPER_JOINT_NAME = 'Rlink1_Joint'
 JOINT_NAMES = ARM_JOINT_NAMES + (GRIPPER_JOINT_NAME,)
 
-# Servo mid-travel, which is URDF zero for the five arm joints.
+# Servo mid-travel, the nominal URDF zero for the five arm joints.
 CENTER_DEG = 90.0
+
+# Per-servo zero-offset (servo degrees): the servo command that puts a joint at
+# true mechanical zero is CENTER_DEG + this. Corrects horns/servo zero not
+# landing exactly at 90. Measured 2026-07-18 by posing the arm straight up with
+# torque off and reading the encoders (reading - 90); stable to 0 spread, and
+# 2/3/4 = +2 reproduced across two independent poses. Servo 1 (base) checked
+# with the arm bent over and needs no adjustment.
+_ZERO_OFFSET = {1: 0.0, 2: 2.0, 3: 2.0, 4: 2.0, 5: -2.0}
 
 # Per-servo sign of the URDF angle relative to the driver's angle.
 _SIGN = {1: +1.0, 2: -1.0, 3: -1.0, 4: -1.0, 5: +1.0}
+
+
+def _center(sid):
+    """Servo angle (degrees) that corresponds to this joint's URDF zero."""
+    return CENTER_DEG + _ZERO_OFFSET[sid]
 
 # Gripper: servo 6 degrees <-> the vendor's "grip angle", which is
 # Rlink1_Joint in degrees, offset by CENTER_DEG.
@@ -59,7 +72,7 @@ def servo_to_urdf(servo_deg):
     for sid in range(1, 6):
         angle = servo_deg[sid - 1]
         out.append(None if angle is None
-                   else radians(_SIGN[sid] * (angle - CENTER_DEG)))
+                   else radians(_SIGN[sid] * (angle - _center(sid))))
     grip = servo_deg[5]
     if grip is None:
         out.append(None)
@@ -73,7 +86,7 @@ def urdf_to_servo(joint_rad):
     """Six URDF angles (radians, ordered as JOINT_NAMES) -> six driver angles
     (degrees, servo ids 1-6). Inverse of servo_to_urdf, within the gripper's
     clamped range."""
-    out = [CENTER_DEG + _SIGN[sid] * degrees(joint_rad[sid - 1])
+    out = [_center(sid) + _SIGN[sid] * degrees(joint_rad[sid - 1])
            for sid in range(1, 6)]
     grip_angle = degrees(joint_rad[5]) + CENTER_DEG
     out.append(_lerp(grip_angle, *_GRIP_ANGLE_RANGE, *_GRIP_SERVO_RANGE))
