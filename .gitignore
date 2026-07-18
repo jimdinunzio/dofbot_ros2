@@ -9,7 +9,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Python packaging metadata (Your question)
+# Python packaging metadata
 *.egg-info/
 .eggs/
 dist/

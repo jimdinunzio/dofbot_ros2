@@ -1,0 +1,98 @@
+"YB-SD15M Servo Parameters — DOFBOT 6-DOF Arm (Yahboom, Big Orange configuration)",,,,,,,,,,
+A.  PER-SERVO IDENTITY AND RANGE,,,,,,,,,,
+"Servo
+ID","Joint /
+Function","Angle
+Range (°)","Raw Pos
+Min","Raw Pos
+Max","Inverted
+in Arm_Lib","API 0°
+? physical","API 90°
+? physical","API 180°
+? physical","Rest
+Angle (°)",Arm_Lib Conversion Formula
+1,Base rotation,0–180°,900,3100,No,Left of robot (camera side),Centered (facing front),Right of robot,90,pos = int(2200 × angle / 180 + 900)
+2,"Shoulder
+(above base)",0–180°,900,3100,Yes (180?a),"Perp. to prior joint,
+bend away from robot",Straight up,"Perp. to prior joint,
+bend into robot",156,pos = int(2200 × (180?angle) / 180 + 900)
+3,Elbow,0–180°,900,3100,Yes (180?a),"Perp. to prior joint,
+bend away from robot",Straight up,"Perp. to prior joint,
+bend into robot",0,pos = int(2200 × (180?angle) / 180 + 900)
+4,Wrist pitch,0–180°,900,3100,Yes (180?a),"Perp. to prior joint,
+bend away from robot",Straight up,"Perp. to prior joint,
+bend into robot",2,pos = int(2200 × (180?angle) / 180 + 900)
+5,"Wrist rotation
+(roll)",0–270°,380,3700,No,Gripper servo facing right,"Servo facing down;
+fingers ±left/right",Servo facing left,89,pos = int(3320 × angle / 270 + 380)
+6,"Gripper
+open/close","0–180°
+(effective 0–170)",900,3100,No,"Fully open
+(0–50 = opening out)",—,"Closed
+(51–170 = closing)",90,pos = int(2200 × angle / 180 + 900)
+,,,,,,,,,,
+B.  DETAILED ANGLE CONVENTIONS  (as used in Arm_Lib and Jupyter notebooks),,,,,,,,,,
+Servo,Convention / Notes,,,,,,,,,
+1 – Base,90° = camera-side of robot facing front (centered). 0° = arm rotated to left. 180° = arm rotated to right. Increasing angle = clockwise from above.,,,,,,,,,
+2 – Shoulder,"90° = arm segment pointing straight up. 0° = segment horizontal, extending away from robot. 180° = segment horizontal, extending toward/behind robot. INVERTED: Arm_Lib angle 90° sends raw position 2000 (servo midpoint) after inversion.",,,,,,,,,
+3 – Elbow,Same convention as Servo 2. 90° = straight up relative to prior segment. 0° = extends away. 180° = folds back. INVERTED.,,,,,,,,,
+4 – Wrist pitch,Same convention as Servo 2 and 3. 90° = continuation of prior segment direction. INVERTED.,,,,,,,,,
+5 – Wrist rotation,"0° = gripper servo body facing right. 45° = fingers angled down-left / up-right. 90° = servo facing down, fingers parallel left/right. 135° = fingers down-right / up-left. 270° = servo facing up.  NOT INVERTED.  Range: 0–270°.",,,,,,,,,
+6 – Gripper,"0–50° = fully open to partially open (opening out phase). 51–170° = closing. ~170° = fully closed. Practical range 0–50 for open, ~130–170 for gripping.  NOT INVERTED.",,,,,,,,,
+,,,,,,,,,,
+C.  REST / HOME POSITIONS,,,,,,,,,,
+Description,S1 (Base),S2 (Shoulder),S3 (Elbow),S4 (Wrist P.),S5 (Wrist R.),S6 (Gripper),API call,Notes,,
+"Safe rest
+(from arm_notes.md)",90,156,0,2,89,90,"Arm.Arm_serial_servo_write6(90,156,0,2,89,90, t)","Curled tight over base, gripper half open.",,
+Upright / home,90,90,90,90,90,50,"Arm.Arm_serial_servo_write6(90,90,90,90,90,50, t)",All joints vertical/centred. Gripper open.,,
+Gripper open,—,—,—,—,—,0,"Arm.Arm_serial_servo_write(6, 0, t)",Full open.,,
+Gripper closed,—,—,—,—,—,170,"Arm.Arm_serial_servo_write(6, 170, t)",Fully closed.,,
+,,,,,,,,,,
+D.  PORTING NOTES — Arm_Lib (I2C/expansion board)  ?  Arm_Driver (direct bus servo via USB),,,,,,,,,,
+Arm_Lib method,Arm_Driver equivalent,,,,Notes,,,,,
+"Arm_serial_servo_write(id, angle, time)","Convert angle?raw pos (apply inversion for IDs 2,3,4). Send CMD 0x03 / ADDR 0x2A packet to servo ID.",,,,Direct replacement. Same signature.,,,,,
+"Arm_serial_servo_write6(s1..s6, time)",Send 6 individual CMD 0x03 / ADDR 0x2A packets with per-servo position in sequence.,,,,No broadcast equivalent for different positions. Send one packet per servo.,,,,,
+"Arm_serial_servo_write6_array(joints, time)","Same as above — unpack array, apply per-servo conversion, send 6 packets.",,,,,,,,,
+Arm_serial_servo_read(id),Send CMD 0x02 / ADDR 0x38 packet. Read reply (discard echo if using resistor hack). Convert raw pos ? angle (inverse of write conversion).,,,,Same return value: angle in degrees or None on failure.,,,,,
+Arm_serial_set_torque(onoff),Send CMD 0x03 / ADDR 0x28 with data=0x01 (enable) or 0x00 (disable) to each servo ID 1–6.,,,,Yahboom register 0x28 = torque enable on YB-SD15M.,,,,,
+Arm_serial_set_id(id),Send CMD 0x03 / ADDR 0x05 packet with ID=0xFE (broadcast). new_id = target value.,,,,One servo connected at a time only.,,,,,
+"Arm_RGB_set / Arm_Buzzer_On/Off
+Arm_Button_Mode / Arm_Product_Select
+Arm_Clear_Action / Arm_Action_Mode
+bus_servo_control / Arm_PWM_servo_write",NOT PORTED — expansion board features only.,,,,These functions talk to the YB-EVV01's STM8 coprocessor over I2C. No equivalent exists in the direct bus servo protocol.,,,,,
+,,,,,,,,,,
+E.  DOCUMENTATION DISCREPANCY — Yahboom API PDF vs Arm_Lib.py Source Code,,,,,,,,,,
+Item,,PDF States,,Code (Arm_Lib.py) — AUTHORITATIVE,,,,Impact / Action,,
+"Arm_serial_servo_write6
+servo range for s5 vs s6",,"S1~S5: 0-180°
+S6: 0-270°
+(PDF typo)",,"if s5 > 270: reject. if s6 > 180: reject.
+Servo 5 (wrist rotation) = 0-270°
+Servo 6 (gripper) = 0-180°",,,,"Use code, NOT PDF.
+Servo 5 = 0-270°.
+Servo 6 = 0-180°.",,
+,,,,,,,,,,
+F.  ADDITIONAL API FUNCTIONS (from Yahboom PDF) — Porting Notes,,,,,,,,,,
+Arm_Lib Method,,Arm_Driver Equivalent (direct bus servo),,,,,Notes,,,
+"Arm_serial_servo_read_any(id)
+id: 1-250
+returns: 0-180 or None",,"Same read packet as Arm_serial_servo_read:
+CMD 0x02 / ADDR 0x38 to target ID.
+Convert raw pos to degrees.
+No inversion applied (caller responsible for physical mapping outside IDs 1-6).",,,,,Useful for bench testing spares or replacement servos without reassigning IDs to 1-6.,,,
+"Arm_ping_servo(id)
+Returns: 0xDA=normal
+0x00=no response
+other=servo error",,"Send read packet (CMD 0x02 / ADDR 0x38) and check reply arrives within timeout.
+If reply checksum valid: return DATA_H byte (0xDA = healthy).
+If no reply or checksum fail: return 0x00.
+Note: same packet as position read — servo embeds status in reply byte.",,,,,"Use for startup self-check.
+Ping IDs 1-6 before enabling motion.
+Log any non-0xDA response.
+For all-clear, all 6 must return 0xDA.",,,
+"Arm_serial_servo_write(id=0, angle, time)
+id=0 broadcasts same angle to all 6 servos",,"Use broadcast ID 0xFE in packet header.
+Applies same raw pos to ALL servos — no per-servo inversion.
+For inversion-aware all-same-angle, send 6 individual packets with adjusted angles for IDs 2,3,4.",,,,,"Broadcast does NOT trigger servo replies.
+Primary use: homing all servos to 90° simultaneously.
+For different angles per servo, use write6 or write6_array instead.",,,
