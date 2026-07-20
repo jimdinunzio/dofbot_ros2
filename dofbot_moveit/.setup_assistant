@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: dofbot_description
+    relative_path: urdf/dofbot.urdf
+  srdf:
+    relative_path: config/dofbot_description.srdf
+  package_settings:
+    author_name: Jim DiNunzio
+    author_email: jim@dinunzio.com
+    generated_timestamp: 1784424790
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
