@@ -9,6 +9,7 @@ it on the topic.
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -23,6 +24,10 @@ def generate_launch_description():
     ld.add_action(DeclareLaunchArgument(
         'port', default_value='/dev/ttyTHS1',
         description='Serial port for the bus servos.'))
+    ld.add_action(DeclareLaunchArgument(
+        'rviz', default_value='true', choices=['true', 'false'],
+        description='Start RViz; set false to run headless (e.g. on the Jetson, '
+                    'with RViz on a remote machine).'))
 
     # robot_state_publisher only (via urdf_launch description.launch.py).
     ld.add_action(IncludeLaunchDescription(
@@ -41,6 +46,7 @@ def generate_launch_description():
 
     ld.add_action(Node(
         package='rviz2', executable='rviz2', name='rviz2', output='screen',
+        condition=IfCondition(LaunchConfiguration('rviz')),
         arguments=['-d', PathJoinSubstitution(
             [FindPackageShare('dofbot_ctrl'), 'rviz', 'mirror.rviz'])]))
 
