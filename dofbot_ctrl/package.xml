@@ -9,6 +9,9 @@
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>shape_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>dofbot_arm_lib</exec_depend>
   <exec_depend>rviz2</exec_depend>

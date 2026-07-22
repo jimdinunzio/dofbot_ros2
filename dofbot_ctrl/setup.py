@@ -28,6 +28,8 @@ setup(
             'joint_state_mirror = dofbot_ctrl.joint_state_mirror:main',
             'gui_teleop = dofbot_ctrl.gui_teleop:main',
             'calibrate_zero = dofbot_ctrl.calibrate_zero:main',
+            'moveit_bridge = dofbot_ctrl.moveit_bridge:main',
+            'chassis_collision = dofbot_ctrl.chassis_collision:main',
         ],
     },
 )
