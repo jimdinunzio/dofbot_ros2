@@ -134,4 +134,12 @@
     <disable_collisions link1="arm3_Link" link2="arm5_Link" reason="Never"/>
     <disable_collisions link1="arm3_Link" link2="base_link" reason="Never"/>
     <disable_collisions link1="arm4_Link" link2="arm5_Link" reason="Adjacent"/>
+    <!--CHASSIS + FLOOR: base_link, chassis_link and floor_link are joined by
+        fixed joints, so their relative poses never change and the collision
+        result between them is a constant. Checking them every state is pure
+        waste, so disable those three pairs. Collisions between these links and
+        the moving arm/gripper links stay ENABLED - that is the whole point.-->
+    <disable_collisions link1="base_link" link2="chassis_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="floor_link" reason="Adjacent"/>
+    <disable_collisions link1="chassis_link" link2="floor_link" reason="Adjacent"/>
 </robot>

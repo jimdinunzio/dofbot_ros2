@@ -5,6 +5,12 @@
     <!-- Import dofbot_description urdf file -->
     <xacro:include filename="$(find dofbot_description)/urdf/dofbot.urdf" />
 
+    <!-- Chassis body + virtual floor, so MoveIt won't plan the arm back into
+         the robot or down through the table. Defaults are the measured values;
+         override here if the mounting changes. -->
+    <xacro:include filename="$(find dofbot_description)/urdf/chassis.xacro" />
+    <xacro:dofbot_chassis parent="base_link" />
+
     <!-- Import control_xacro -->
     <xacro:include filename="dofbot_description.ros2_control.xacro" />
 
