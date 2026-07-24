@@ -33,11 +33,11 @@
       floor_x_back:=-0.5
       floor_half_width:=0.35">
 
-    <material name="chassis_grey">
-      <color rgba="0.35 0.37 0.42 0.55"/>
+    <material name="chassis_orange">
+      <color rgba="0.90 0.45 0.10 0.55"/>
     </material>
-    <material name="floor_grey">
-      <color rgba="0.30 0.30 0.30 0.35"/>
+    <material name="floor_brown">
+      <color rgba="0.40 0.26 0.13 0.35"/>
     </material>
 
     <!-- Robot body: a z-axis cylinder behind the arm. URDF cylinders are
@@ -48,7 +48,7 @@
         <geometry>
           <cylinder radius="${radius}" length="${height}"/>
         </geometry>
-        <material name="chassis_grey"/>
+        <material name="chassis_orange"/>
       </visual>
       <collision>
         <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -73,7 +73,7 @@
                      ${2.0 * floor_half_width}
                      ${floor_thickness}"/>
         </geometry>
-        <material name="floor_grey"/>
+        <material name="floor_brown"/>
       </visual>
       <collision>
         <origin xyz="0 0 0" rpy="0 0 0"/>
