@@ -16,7 +16,13 @@ Visualization Manager:
     - Class: moveit_rviz_plugin/MotionPlanning
       Name: MotionPlanning
       Planned Path:
-        Loop Animation: true
+        # Loop Animation replays each planned trajectory forever. With
+        # pick_place driving a sequence of segments that shows up as a
+        # translucent "ghost" arm cycling through the previous segment while
+        # the real one executes the next. Show Trail is worse -- it draws every
+        # waypoint at once, giving a stack of ghost arms. Both stay off.
+        Loop Animation: false
+        Show Trail: false
         State Display Time: 0.05 s
         Trajectory Topic: display_planned_path
       Planning Scene Topic: monitored_planning_scene

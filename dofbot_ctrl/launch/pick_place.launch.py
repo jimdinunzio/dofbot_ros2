@@ -8,6 +8,17 @@ The stack `pick_place` needs: MoveIt on mock joints, plus the servo bridge.
     # headless (e.g. over ssh), with RViz run separately on a laptop
     ros2 launch dofbot_ctrl pick_place.launch.py rviz:=false
 
+For that last case, the laptop runs RVIZ AND NOTHING ELSE:
+
+    ros2 launch dofbot_moveit moveit_rviz.launch.py
+
+Do NOT run this file on the laptop with rviz:=true to get the display.
+`bridge:=false` only drops moveit_bridge; move_group, ros2_control_node,
+robot_state_publisher and the controller spawners all still start, so a second
+copy of the whole stack joins the domain. The symptom is two /move_action
+servers -- "Ignoring unexpected goal response", "unknown goal response,
+ignoring...", CONTROL_FAILED, and an arm driven by two controllers at once.
+
 then, in another terminal:
 
     ros2 run dofbot_ctrl pick_place -- --check-states
