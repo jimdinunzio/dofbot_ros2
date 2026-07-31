@@ -19,8 +19,9 @@ setup(
     zip_safe=True,
     maintainer='jim',
     maintainer_email='jim@dinunzio.com',
-    description='DOFBOT arm control nodes: servo/URDF angle mapping and a '
-                'read-only joint-state mirror.',
+    description='DOFBOT arm control: servo/URDF angle mapping, a joint-state '
+                'mirror, analytic kinematics and a programmatic pick-and-place '
+                'layer over MoveIt.',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
@@ -30,6 +31,7 @@ setup(
             'calibrate_zero = dofbot_ctrl.calibrate_zero:main',
             'moveit_bridge = dofbot_ctrl.moveit_bridge:main',
             'chassis_collision = dofbot_ctrl.chassis_collision:main',
+            'pick_place = dofbot_ctrl.pick_place:main',
         ],
     },
 )

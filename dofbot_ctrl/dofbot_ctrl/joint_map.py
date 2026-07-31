@@ -49,8 +49,12 @@ def _center(sid):
 # servo 170 = fully closed. This maps onto Rlink1_Joint's full URDF limit
 # [0, 1.570] and keeps commands within the servo's effective 0-170 range.
 # (The vendor's SimulateToArm.py used (30, 180), which clipped the open end
-# and overshot the closed stop.) Direction still needs a hardware check --
-# if RViz's gripper closes when the real one opens, reverse this tuple.
+# and overshot the closed stop.) Direction verified on hardware against the
+# RViz saved open/close states: servo 0 really is open and 170 really is shut,
+# so close_gripper() closes. Do not reverse this tuple.
+#
+# The jaw GEOMETRY -- how far apart the jaws actually are at a given
+# Rlink1_Joint angle -- is a separate calibration and lives in gripper.py.
 _GRIP_SERVO_RANGE = (0.0, 170.0)
 _GRIP_ANGLE_RANGE = (90.0, 180.0)
 

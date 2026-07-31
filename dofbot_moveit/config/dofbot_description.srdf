@@ -36,11 +36,56 @@
         <joint name="arm4_Joint" value="0"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
+    <!--The five arm states below are mirrored in dofbot_ctrl/moveit_client.py
+        (NAMED_STATES); change both together. Each was validated against the
+        live planning scene by `pick_place` in its check-states mode, rather
+        than eyeballed in RViz.
+        'init' used to be {0, -1.57, 1.57, 1.57, 0}; /check_state_validity
+        reports arm3_Link/chassis_link for that, which only became a collision
+        once chassis_link and floor_link became real URDF links.-->
+    <!--Rest/stow pose: folded and compact, TCP (0.091, 0.002, 0.196).
+        Posed by hand on the real arm and read with calibrate_zero as
+        {1: 1.0, 2: 69.0, 3: -84.0, 4: -92.0, 5: -2.0} (encoder median minus
+        90), which joint_map.servo_to_urdf turns into
+        {1.00, -67.00, 86.00, 94.00, 0.00} degrees.
+        arm4 is clamped 94.00 -> 89.00 deg: the URDF limit is 89.95 and the
+        hardware maximum is 92.00 (servo 4 on its 0 stop, given its +2 zero
+        offset), so the measured value was posed past the mechanical stop.
+        Costs 13 mm of TCP height.-->
     <group_state name="init" group="arm_group">
+        <joint name="arm1_Joint" value="0.0175"/>
+        <joint name="arm2_Joint" value="-1.1694"/>
+        <joint name="arm3_Joint" value="1.5010"/>
+        <joint name="arm4_Joint" value="1.5533"/>
+        <joint name="arm5_Joint" value="0"/>
+    </group_state>
+    <!--Observation pose: arm up and tucked back, TCP (0.100, 0, 0.340),
+        phi=1.0, leaving the chassis camera a clear view of the floor.-->
+    <group_state name="ready" group="arm_group">
         <joint name="arm1_Joint" value="0"/>
-        <joint name="arm2_Joint" value="-1.57"/>
-        <joint name="arm3_Joint" value="1.57"/>
-        <joint name="arm4_Joint" value="1.57"/>
+        <joint name="arm2_Joint" value="-0.7932"/>
+        <joint name="arm3_Joint" value="1.2775"/>
+        <joint name="arm4_Joint" value="0.5157"/>
+        <joint name="arm5_Joint" value="0"/>
+    </group_state>
+    <!--Transport pose: arm high and tucked, TCP (0.100, 0, 0.300), phi=1.4.-->
+    <group_state name="carry" group="arm_group">
+        <joint name="arm1_Joint" value="0"/>
+        <joint name="arm2_Joint" value="-0.7112"/>
+        <joint name="arm3_Joint" value="0.8416"/>
+        <joint name="arm4_Joint" value="1.2695"/>
+        <joint name="arm5_Joint" value="0"/>
+    </group_state>
+    <!--Release pose: TCP (0.150, 0.150, 0.300), phi=1.4, front-left and high.
+        SITE-SPECIFIC - it assumes a bin whose rim is below ~0.3 m off the left
+        front. Re-measure for the actual bin. Sharing phi with 'carry' means
+        moving between the two yaws and translates a held object without
+        rolling it over.-->
+    <group_state name="over_trash" group="arm_group">
+        <joint name="arm1_Joint" value="0.7821"/>
+        <joint name="arm2_Joint" value="0.6963"/>
+        <joint name="arm3_Joint" value="-0.5057"/>
+        <joint name="arm4_Joint" value="1.2094"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
     <group_state name="open" group="grip_group">
