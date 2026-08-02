@@ -46,7 +46,17 @@ WHAT IS EXCLUDED, AND WHY
 base_link is mostly air inside, so its hull fills 62% of the bounding box. It is
 replaced by two primitives inlined in dofbot.urdf, sized from Jim's measurements
 of the physical part: a 0.1450 x 0.1200 x 0.0030 mounting-plate box offset
--0.0135 in x, and the r 0.0400 arm base cylinder spanning z 0.0030 .. 0.0850.
+-0.0135 in x, and the r 0.0400 arm base cylinder spanning z 0.0030 .. 0.0828.
+
+The cylinder runs to 0.0828 rather than stopping at the housing shoulder at
+0.0800, because the four servo mounting screw heads stand 2.8 mm proud of it
+(5 mm across, on a +-0.0249 square). They are well inside r 0.0400, so covering
+them costs nothing in radius, and they are at exactly the height arm1_Link
+sweeps past.
+
+base_link.STL has since been edited in Fusion -- 18 mm of standoff removed to
+match the physical arm, and the face count cut to 31,052 -- so the triangle
+figures above describe the STOCK mesh, not what is in the tree now.
 
 arm5_Link was hulled first, then reverted to its full mesh once the result was
 inspected assembled in RViz. See the note on LINKS below.

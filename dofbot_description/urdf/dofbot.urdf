@@ -38,10 +38,16 @@
         is a raw CAD tessellation with 1565 non-manifold edges, and the base is
         a plate plus a servo housing - shapes a box and a cylinder describe
         exactly, at a fraction of the cost. See scripts/make_collision_meshes.py
-        for the arm links, which need hulls instead.-->
+        for the arm links, which need hulls instead.
+
+        The cylinder runs to the top of the four servo mounting screw heads
+        (z 0.0828, 5 mm blobs on a +-0.0249 square), not just to the housing
+        shoulder at 0.0800. They sit well inside r 0.0400, so enclosing them
+        costs no radius - and leaving them out would have left real geometry
+        unmodelled at exactly the height arm1_Link sweeps past.-->
     <collision>
       <origin
-        xyz="-0.0135 0 0.0015"
+        xyz="-0.0125 0 0.0015"
         rpy="0 0 0" />
       <geometry>
         <box
@@ -50,12 +56,12 @@
     </collision>
     <collision>
       <origin
-        xyz="0 0 0.0415"
+        xyz="0 0 0.0429"
         rpy="0 0 0" />
       <geometry>
         <cylinder
           radius="0.0400"
-          length="0.0770" />
+          length="0.0798" />
       </geometry>
     </collision>
   </link>
@@ -105,9 +111,11 @@
     <!--MEASURED ON THE PHYSICAL ARM, and deliberately NOT the CAD's 0.0925.
         This arm's standoffs are 32.0 mm where the shipped ones are 50.0 mm, so
         every joint above it sits exactly 18.0 mm lower and the shoulder ends up
-        at 0.1075 rather than 0.1255. The visual meshes still show the long
-        standoffs, so RViz renders the base taller than the collision cylinder -
-        cosmetic, and deliberate. Mirrored by Z0 in dofbot_kinematics.py.-->
+        at 0.1075 rather than 0.1255. base_link.STL was shortened to match in
+        Fusion, so the visual and the collision primitives now agree - if RViz
+        ever shows the base standing proud of the collision cylinder again, the
+        mesh has been reverted to stock. Mirrored by Z0 in
+        dofbot_kinematics.py.-->
     <origin
       xyz="0 0 0.0745"
       rpy="0 0 0" />

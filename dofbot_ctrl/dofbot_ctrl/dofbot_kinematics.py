@@ -90,8 +90,9 @@ from math import atan2, cos, degrees, hypot, sin, sqrt
 #   32 mm standoffs (Z0=0.1075): 434.5 mm max height, 287.0 mm floor radius
 # Picking off the floor wants the radius.
 #
-# The VISUAL meshes still show the long standoffs, so RViz renders the base
-# taller than the collision cylinder. Cosmetic, and deliberate.
+# base_link.STL was shortened by the same 18 mm in Fusion, so the visual mesh
+# and the collision primitives now agree. If RViz ever shows the base standing
+# proud of the collision cylinder again, that mesh has been reverted to stock.
 _D_BASE = 0.0745        # base_link -> arm1_Joint  (CAD says 0.0925)
 _D_SHOULDER = 0.033     # arm1_Joint -> arm2_Joint (same as CAD)
 Z0 = _D_BASE + _D_SHOULDER          # 0.1075, height of the shoulder pitch axis
