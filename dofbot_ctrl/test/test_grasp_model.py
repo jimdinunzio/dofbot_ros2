@@ -77,9 +77,24 @@ def test_grip_angle_squeezes_past_contact():
     assert gripper.grip_angle_for(0.001) <= gripper.CLOSE_ANGLE
 
 
-def test_tip_offset_is_flagged_uncalibrated_not_silently_zero():
+def test_tip_offset_is_positive_and_grows_as_the_jaws_close():
+    """The fingers reach PAST Gripping_point_Link, further the tighter they shut.
+
+    Sign and direction both matter and neither is observable from a passing pick
+    -- get either wrong and the arm reaches through the object instead of
+    pinching it at the tips, which only shows up when you look at RViz.
+    """
+    assert gripper.tip_offset_for(gripper.MAX_WIDTH) > 0.0
+    offsets = [gripper.tip_offset_for(mm / 1000.0) for mm in range(0, 58, 5)]
+    assert all(a > b for a, b in zip(offsets, offsets[1:])), \
+        'tip offset must fall as the object gets wider (jaws more open)'
+    assert gripper.tip_offset_for(0.030) == pytest.approx(0.0330, abs=1e-4)
+    assert gripper.tip_offset_for(0.0) == pytest.approx(0.0421, abs=1e-4)
+
+
+def test_widths_are_still_flagged_uncalibrated():
+    """The tip offsets come from the URDF; the widths are still a two-point stub."""
     assert gripper.CALIBRATED is False
-    assert gripper.tip_offset_for(0.030) == 0.0
     assert 'UNCALIBRATED' in gripper.describe(0.030)
 
 

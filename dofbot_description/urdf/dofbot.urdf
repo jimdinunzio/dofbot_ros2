@@ -34,13 +34,28 @@
           rgba="1 1 1 1" />
       </material>
     </visual>
+    <!--Collision is two primitives rather than base_link.STL. The shipped mesh
+        is a raw CAD tessellation with 1565 non-manifold edges, and the base is
+        a plate plus a servo housing - shapes a box and a cylinder describe
+        exactly, at a fraction of the cost. See scripts/make_collision_meshes.py
+        for the arm links, which need hulls instead.-->
     <collision>
       <origin
-        xyz="0 0 0"
+        xyz="-0.0135 0 0.0015"
         rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://dofbot_description/meshes/base_link.STL" />
+        <box
+          size="0.1450 0.1200 0.0030" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin
+        xyz="0 0 0.0415"
+        rpy="0 0 0" />
+      <geometry>
+        <cylinder
+          radius="0.0400"
+          length="0.0770" />
       </geometry>
     </collision>
   </link>
@@ -80,15 +95,21 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://dofbot_description/meshes/arm1_Link.STL" />
+          filename="package://dofbot_description/meshes/collision/arm1_Link.STL" />
       </geometry>
     </collision>
   </link>
   <joint
     name="arm1_Joint"
     type="revolute">
+    <!--MEASURED ON THE PHYSICAL ARM, and deliberately NOT the CAD's 0.0925.
+        This arm's standoffs are 32.0 mm where the shipped ones are 50.0 mm, so
+        every joint above it sits exactly 18.0 mm lower and the shoulder ends up
+        at 0.1075 rather than 0.1255. The visual meshes still show the long
+        standoffs, so RViz renders the base taller than the collision cylinder -
+        cosmetic, and deliberate. Mirrored by Z0 in dofbot_kinematics.py.-->
     <origin
-      xyz="0 0 0.0925"
+      xyz="0 0 0.0745"
       rpy="0 0 0" />
     <parent
       link="base_link" />
@@ -138,7 +159,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://dofbot_description/meshes/arm2_Link.STL" />
+          filename="package://dofbot_description/meshes/collision/arm2_Link.STL" />
       </geometry>
     </collision>
   </link>
@@ -196,7 +217,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://dofbot_description/meshes/arm3_Link.STL" />
+          filename="package://dofbot_description/meshes/collision/arm3_Link.STL" />
       </geometry>
     </collision>
   </link>
@@ -254,7 +275,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://dofbot_description/meshes/arm4_Link.STL" />
+          filename="package://dofbot_description/meshes/collision/arm4_Link.STL" />
       </geometry>
     </collision>
   </link>

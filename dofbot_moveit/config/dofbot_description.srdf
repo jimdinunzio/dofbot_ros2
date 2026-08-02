@@ -43,7 +43,7 @@
         'init' used to be {0, -1.57, 1.57, 1.57, 0}; /check_state_validity
         reports arm3_Link/chassis_link for that, which only became a collision
         once chassis_link and floor_link became real URDF links.-->
-    <!--Rest/stow pose: folded and compact, TCP (0.091, 0.002, 0.196).
+    <!--Rest/stow pose: folded and compact, TCP (0.091, 0.002, 0.178).
         Posed by hand on the real arm and read with calibrate_zero as
         {1: 1.0, 2: 69.0, 3: -84.0, 4: -92.0, 5: -2.0} (encoder median minus
         90), which joint_map.servo_to_urdf turns into
@@ -59,7 +59,7 @@
         <joint name="arm4_Joint" value="1.5533"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
-    <!--Observation pose: arm up and tucked back, TCP (0.100, 0, 0.340),
+    <!--Observation pose: arm up and tucked back, TCP (0.100, 0, 0.322),
         phi=1.0, leaving the chassis camera a clear view of the floor.-->
     <group_state name="ready" group="arm_group">
         <joint name="arm1_Joint" value="0"/>
@@ -68,7 +68,7 @@
         <joint name="arm4_Joint" value="0.5157"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
-    <!--Transport pose: arm high and tucked, TCP (0.100, 0, 0.300), phi=1.4.-->
+    <!--Transport pose: arm high and tucked, TCP (0.100, 0, 0.282), phi=1.4.-->
     <group_state name="carry" group="arm_group">
         <joint name="arm1_Joint" value="0"/>
         <joint name="arm2_Joint" value="-0.7112"/>
@@ -76,7 +76,7 @@
         <joint name="arm4_Joint" value="1.2695"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
-    <!--Release pose: TCP (0.150, 0.150, 0.300), phi=1.4, front-left and high.
+    <!--Release pose: TCP (0.150, 0.150, 0.282), phi=1.4, front-left and high.
         SITE-SPECIFIC - it assumes a bin whose rim is below ~0.3 m off the left
         front. Re-measure for the actual bin. Sharing phi with 'carry' means
         moving between the two yaws and translates a held object without

@@ -4,6 +4,7 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /RobotModel1
+        - /RobotModel2
         - /TF1
 Visualization Manager:
   Class: ""
@@ -20,9 +21,34 @@ Visualization Manager:
       Description Topic:
         Value: /robot_description
         Depth: 5
-        Durability Policy: Volatile
+        # Must be Transient Local. robot_state_publisher LATCHES
+        # /robot_description -- it publishes the URDF once at startup and relies
+        # on late subscribers picking up the retained message. A Volatile
+        # subscriber only sees messages published after it connects, so RViz
+        # gets the model only if it wins a startup race against RSP, and shows
+        # an empty or partial robot when it loses.
+        Durability Policy: Transient Local
         Reliability Policy: Reliable
       Visual Enabled: true
+      Collision Enabled: false
+      Alpha: 1
+    # Second RobotModel on the same URDF, showing COLLISION geometry instead of
+    # visual. Off by default. Tick it to see the low-poly hulls and the base
+    # primitives assembled and in-frame, which is the only way to judge them --
+    # a hull looks wrong in isolation and right once it is on the robot.
+    # Leave both enabled and drop this one's Alpha to overlay collision on
+    # visual and see where the hull is fatter than the real part.
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel (collision)
+      Enabled: false
+      Description Topic:
+        Value: /robot_description
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Visual Enabled: false
+      Collision Enabled: true
+      Alpha: 0.5
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: true

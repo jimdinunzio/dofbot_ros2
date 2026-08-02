@@ -9,6 +9,8 @@ runs -- pyserial takes no exclusive lock, so a second owner (e.g. arm-service)
 interleaves bytes on the bus and corrupts reads silently rather than failing.
 """
 
+import os
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
@@ -41,10 +43,50 @@ class JointStateMirror(Node):
             self.arm.Arm_serial_set_torque(0)
             self.torque_released = True
 
+        self.port = port
+        self.silent_ticks = 0        # consecutive ticks with nothing from any servo
+        self.ever_published = False
+
         self.pub = self.create_publisher(JointState, '/joint_states', 10)
         self.timer = self.create_timer(1.0 / rate, self.tick)
         self.get_logger().info(
             'Mirroring %s -> /joint_states at %.1f Hz' % (port, rate))
+
+    def _port_rivals(self):
+        """Other processes holding the serial port, named, or ''.
+
+        Worth the /proc walk: two nodes on one bus corrupt each other's replies
+        and look EXACTLY like a powered-off arm. Orphaned nodes are easy to
+        leave behind, because killing a `ros2 launch` kills the launcher but not
+        always its children.
+        """
+        me = os.getpid()
+        rivals = []
+        try:
+            for pid in os.listdir('/proc'):
+                if not pid.isdigit() or int(pid) == me:
+                    continue
+                fd_dir = '/proc/%s/fd' % pid
+                try:
+                    holds = any(os.readlink(os.path.join(fd_dir, fd)) == self.port
+                                for fd in os.listdir(fd_dir))
+                except OSError:
+                    continue
+                if holds:
+                    try:
+                        with open('/proc/%s/cmdline' % pid, 'rb') as f:
+                            cmd = f.read().replace(b'\0', b' ').decode().strip()
+                    except OSError:
+                        cmd = '?'
+                    rivals.append('%s (pid %s)' % (cmd.split()[-1] if cmd else '?',
+                                                   pid))
+        except OSError:
+            return ''
+        if not rivals:
+            return ''
+        return (' ANOTHER PROCESS ALSO HAS %s OPEN: %s -- two nodes on one bus '
+                'corrupt each other\'s replies and look identical to a dead '
+                'arm. Kill it first.' % (self.port, ', '.join(rivals)))
 
     def tick(self):
         servo_deg = [self.arm.Arm_serial_servo_read(sid)
@@ -58,12 +100,41 @@ class JointStateMirror(Node):
             else:
                 self.last_good[i] = angle
 
-        if any(angle is None for angle in servo_deg):
-            self.get_logger().warn(
-                'no reading yet from servo(s) %s; not publishing'
-                % [i + 1 for i, a in enumerate(servo_deg) if a is None],
-                throttle_duration_sec=5.0)
+        missing = [i + 1 for i, a in enumerate(servo_deg) if a is None]
+        if missing:
+            self.silent_ticks += 1
+            # A single dropped reply is normal on this bus and not worth an
+            # error. A SUSTAINED failure is not, and it has three causes worth
+            # telling apart, because the raw reads look the same for all three:
+            # the arm is off, another process is on the port, or one servo is
+            # genuinely dead. Note contention usually corrupts SOME replies
+            # rather than silencing all six -- two mirrors on the bus was
+            # observed as servos 1-2 answering and 3-6 not -- so this must not
+            # be gated on all six being absent.
+            if self.silent_ticks >= 3 and not self.ever_published:
+                rivals = self._port_rivals()
+                if rivals:
+                    self.get_logger().error(
+                        'Cannot read the arm on %s.%s' % (self.port, rivals),
+                        throttle_duration_sec=10.0)
+                else:
+                    self.get_logger().error(
+                        'NO REPLY FROM SERVO(S) %s on %s. The arm is almost '
+                        'certainly POWERED OFF -- check the switch and the '
+                        'battery. Nothing will appear in RViz until this is '
+                        'fixed: with no /joint_states there is no TF, so every '
+                        'link below base_link is missing.'
+                        % (missing, self.port), throttle_duration_sec=10.0)
+            else:
+                self.get_logger().warn(
+                    'no reading from servo(s) %s; not publishing' % missing,
+                    throttle_duration_sec=5.0)
             return
+
+        if self.silent_ticks:
+            self.get_logger().info('Servos are replying again.')
+            self.silent_ticks = 0
+        self.ever_published = True
 
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()

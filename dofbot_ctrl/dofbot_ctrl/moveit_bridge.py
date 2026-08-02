@@ -64,6 +64,23 @@ class MoveItBridge(Node):
         self.sync_time = int(self.get_parameter('sync_time_ms').value)
 
         self.arm = Arm_Device(com=port)
+
+        # Prove the arm is actually there before trusting anything downstream.
+        # This node only WRITES, so a powered-off arm produces no symptom at
+        # all: RViz animates the planned motion perfectly while the real arm
+        # sits dead, which is a genuinely confusing way to lose an hour. One
+        # read is enough to tell the difference.
+        if not any(self.arm.Arm_serial_servo_read(sid) is not None
+                   for sid in range(1, 7)):
+            self.get_logger().error(
+                'NO REPLY FROM ANY SERVO on %s. The arm is almost certainly '
+                'POWERED OFF -- check the switch and the battery. Other causes: '
+                'another node holding the port (joint_state_mirror, gui_teleop, '
+                'calibrate_zero), or the wrong port. Continuing anyway, but '
+                'every command will be written into the void: MoveIt and RViz '
+                'will look completely normal while the arm does not move.'
+                % port)
+
         self.arm.Arm_serial_set_torque(1)  # ensure the arm can hold positions
 
         self.target = None        # latest servo command (deg) from /joint_states

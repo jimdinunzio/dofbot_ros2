@@ -43,9 +43,11 @@ tool and the TABLE and solves to the arm5 rotation centre rather than the TCP.
 Their `pitch = 1.04` is therefore NOT directly usable as a phi -- convert it via
 fk() before treating any vendor constant as a phi.
 
-GEOMETRY (from dofbot_description/urdf/dofbot.urdf, all metres)
+GEOMETRY (dofbot_description/urdf/dofbot.urdf, all metres; the first two
+segments are measured on the physical arm and differ from Yahboom's CAD -- see
+the standoff note below)
 ---------------------------------------------------------------
-    base_link  --(z 0.0925)-->  arm1  (yaw theta1, about z)
+    base_link  --(z 0.0745)-->  arm1  (yaw theta1, about z)
                --(z 0.033)-->   arm2  (pitch theta2, about y)   shoulder at Z0
                --(z 0.08285)--> arm3  (pitch theta3, about y)   L1
                --(z 0.08285)--> arm4  (pitch theta4, about y)   L2
@@ -65,13 +67,34 @@ The fixed rpy="3.1416 -1.5708 0" on Gripping_Joint reorients the TCP frame but
 does not move it, so it does not enter the position kinematics at all.
 """
 
-from math import atan2, cos, hypot, sin, sqrt
+from math import atan2, cos, degrees, hypot, sin, sqrt
 
 # --- link geometry, transcribed from the URDF -------------------------------
 
-_D_BASE = 0.0925        # base_link -> arm1_Joint
-_D_SHOULDER = 0.033     # arm1_Joint -> arm2_Joint
-Z0 = _D_BASE + _D_SHOULDER          # 0.1255, height of the shoulder pitch axis
+# MEASURED ON THE PHYSICAL ARM, and _D_BASE deliberately DIFFERS from Yahboom's
+# CAD. Measured in Fusion against the mesh: the shipped standoffs are EXACTLY
+# 50.0 mm and this arm's are EXACTLY 32.0 mm, so the difference is exactly
+# 18.0 mm. That is the ONLY difference -- the shoulder bracket is the same part,
+# so _D_SHOULDER keeps the CAD's 0.033 and the whole correction lands on
+# _D_BASE. The shoulder ends up 107.5 mm above the plate underside, not 125.5.
+#
+# Anchor on the STANDOFF difference, not on a measured shoulder height. Both
+# standoff figures are direct measurements of the same feature, so their
+# difference is exact; deriving 17.5 mm from a measured 108 mm shoulder instead
+# carried the rounding in that reading, and put Z0 0.5 mm too high.
+#
+# Shorter standoffs are the better hardware for this task, which is worth
+# knowing before anyone "fixes" it by ordering longer ones. Raising the shoulder
+# buys height but costs FLOOR reach, because the arm must reach further down:
+#   50 mm standoffs (Z0=0.1255): 452.5 mm max height, 278.6 mm floor radius
+#   32 mm standoffs (Z0=0.1075): 434.5 mm max height, 287.0 mm floor radius
+# Picking off the floor wants the radius.
+#
+# The VISUAL meshes still show the long standoffs, so RViz renders the base
+# taller than the collision cylinder. Cosmetic, and deliberate.
+_D_BASE = 0.0745        # base_link -> arm1_Joint  (CAD says 0.0925)
+_D_SHOULDER = 0.033     # arm1_Joint -> arm2_Joint (same as CAD)
+Z0 = _D_BASE + _D_SHOULDER          # 0.1075, height of the shoulder pitch axis
 L1 = 0.08285            # arm2 -> arm3
 L2 = 0.08285            # arm3 -> arm4
 
@@ -84,8 +107,32 @@ _TCP_X, _TCP_Y, _TCP_Z = -0.00265, 9.7552e-05, 0.068091
 # so these do not rotate relative to one another and simply sum.
 _LAT_PRE = 5e-05 + 0.00055 + 5e-05      # 0.00065
 
-# Joint limits, all five identical in the URDF.
+# Joint limits, transcribed per joint from the URDF's <limit> tags. They are NOT
+# all the same and they are NOT symmetric: arm1 swings -109..+108 degrees, a 217
+# degree sector, while the other four are +-89.95.
+#
+# An earlier version of this module used a single symmetric JOINT_LIMIT = 1.57
+# for all five. That silently clipped the base yaw to +-90 and threw away 19
+# degrees of working sector on each side -- targets out at the edge came back as
+# "no workable approach" when the arm reaches them comfortably. If you add a
+# limit check anywhere, read it from here.
+JOINT_LIMITS = (
+    (-1.9024, 1.8850),      # arm1_Joint  yaw   -109.00 .. +108.00 deg
+    (-1.5700, 1.5700),      # arm2_Joint  pitch
+    (-1.5700, 1.5700),      # arm3_Joint  pitch
+    (-1.5700, 1.5700),      # arm4_Joint  pitch
+    (-1.5700, 1.5700),      # arm5_Joint  roll
+)
+
+# Kept for callers that want a single conservative number (the tightest joint).
+# Prefer JOINT_LIMITS; this cannot express arm1's wider, asymmetric range.
 JOINT_LIMIT = 1.57
+
+
+def in_limits(joints):
+    """True if every angle is within its own joint's URDF range."""
+    return all(lo <= q <= hi for q, (lo, hi) in zip(joints, JOINT_LIMITS))
+
 
 # Slack on the 2R reach test. A fully-extended elbow (theta3 = 0) puts the wrist
 # centre at exactly L1 + L2, and that distance comes back from fk() as
@@ -200,8 +247,10 @@ def ik(x, y, z, phi, roll=0.0, elbow='up', tip='tcp', strict=False):
                     % (rho, abs(lat)))
     r = sqrt(rho * rho - lat * lat)
     t1 = atan2(y, x) - atan2(lat, r)
-    if abs(t1) > JOINT_LIMIT:
-        return fail('theta1 = %.3f rad exceeds the +-%.2f limit' % (t1, JOINT_LIMIT))
+    lo, hi = JOINT_LIMITS[0]
+    if not lo <= t1 <= hi:
+        return fail('arm1_Joint = %.3f rad (%.1f deg) is outside its %.1f..%.1f '
+                    'deg range' % (t1, degrees(t1), degrees(lo), degrees(hi)))
 
     # --- wrist centre (the arm4 origin) -------------------------------------
     rw = r - l3 * sin(phi + delta)
@@ -226,10 +275,11 @@ def ik(x, y, z, phi, roll=0.0, elbow='up', tip='tcp', strict=False):
     t5 = roll
 
     joints = [t1, t2, t3, t4, t5]
-    for name, q in zip(JOINT_NAMES, joints):
-        if abs(q) > JOINT_LIMIT:
-            return fail('%s = %.3f rad exceeds the +-%.2f limit (elbow=%r)'
-                        % (name, q, JOINT_LIMIT, elbow))
+    for name, q, (lo, hi) in zip(JOINT_NAMES, joints, JOINT_LIMITS):
+        if not lo <= q <= hi:
+            return fail('%s = %.3f rad (%.1f deg) is outside its %.1f..%.1f deg '
+                        'range (elbow=%r)'
+                        % (name, q, degrees(q), degrees(lo), degrees(hi), elbow))
     return joints
 
 
@@ -269,7 +319,8 @@ def reach_limits(tip='tcp', roll=0.0):
         'max_reach_from_shoulder': L1 + L2 + l3,
         'max_height': Z0 + L1 + L2 + l3,
         'lateral_offset': lat,
-        'yaw_limit': JOINT_LIMIT,
+        'yaw_range': JOINT_LIMITS[0],       # arm1 is asymmetric and wider
+        'yaw_sector': JOINT_LIMITS[0][1] - JOINT_LIMITS[0][0],
     }
 
 

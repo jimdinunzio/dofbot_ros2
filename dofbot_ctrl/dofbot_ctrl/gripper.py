@@ -57,12 +57,31 @@ _GRIP_ANGLE_RANGE in joint_map.py; and _TABLE here.
 CALIBRATED = False
 
 # (Rlink1_Joint radians, jaw gap metres, tip offset metres).
-# Only the endpoints are measured. The middle is a straight line and the real
-# linkage is not linear -- that is what step 5 above fixes. tip_offset is 0.0
-# throughout because it has not been measured yet, not because it is zero.
+# The WIDTHS are the two measured endpoints; the straight line between them is
+# a stub, because the real four-bar is not linear. That is what step 5 fixes.
+#
+# The TIP OFFSETS are not a stub. They are the fingertip's position along the
+# tool axis relative to Gripping_point_Link, computed from the URDF: the
+# arm5 -> Rlink1_Joint -> Rlink2_Joint chain applied to the outermost vertex of
+# Rlink2_Link.STL, which is at (0.0509, 0.0106, -0.0020) in that link's frame.
+# The object is gripped BETWEEN THE FINGERTIPS, so this is where the contact is,
+# and it is 12-42 mm past the TCP frame depending on the opening. Deriving the
+# jaw WIDTH this way was the mistake called out above -- the width depends on
+# where the flat gripping face is, which is coupler mesh nobody has measured.
+# The tip POSITION is just the end of the finger, and the mesh does know that.
+#
+# Worth re-checking with calipers all the same, together with the widths.
 _TABLE = (
-    (0.0000, 0.060, 0.0),
-    (1.5708, 0.000, 0.0),
+    #  angle    gap    tip offset
+    (0.0000, 0.060, 0.0117),
+    (0.2000, 0.0524, 0.0177),
+    (0.4000, 0.0447, 0.0234),
+    (0.6000, 0.0371, 0.0287),
+    (0.7850, 0.030, 0.0330),
+    (1.0000, 0.0218, 0.0371),
+    (1.2000, 0.0142, 0.0399),
+    (1.4000, 0.0065, 0.0416),
+    (1.5708, 0.000, 0.0421),
 )
 
 OPEN_ANGLE = _TABLE[0][0]

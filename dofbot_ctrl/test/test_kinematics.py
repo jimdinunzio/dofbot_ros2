@@ -120,33 +120,45 @@ def urdf_fk(joints, tip='tcp'):
 # grids and helpers
 # --------------------------------------------------------------------------
 
-LIM = K.JOINT_LIMIT
+LIM = K.JOINT_LIMIT           # the tightest joint; arm1 is wider, see JOINT_LIMITS
+
+
+def joint_span(index, n, margin=0.999):
+    """`n` angles spanning one joint's OWN range, stopping short of the stops.
+
+    Per joint, because they are not all the same: arm1 runs -109..+108 degrees
+    while the rest are +-89.95. Using one symmetric number here would never
+    exercise the outer 19 degrees of base yaw, which is exactly the region a
+    bug once hid in.
+
+    The margin is deliberate. ik() applies no epsilon to the limit test, so a
+    state sitting exactly ON a stop round-trips to 1.5700000000000003 and is
+    rejected -- an artefact of testing an infinitely thin set, not a defect
+    worth an epsilon in the solver.
+    """
+    lo, hi = K.JOINT_LIMITS[index]
+    mid = (lo + hi) / 2.0
+    lo, hi = mid + (lo - mid) * margin, mid + (hi - mid) * margin
+    return [lo + (hi - lo) * i / (n - 1) for i in range(n)]
 
 
 def joint_grid(n=5):
-    """All n**5 combinations of n angles spanning the joint range.
-
-    The span stops a whisker short of the stops on purpose. ik() rejects any
-    solution with abs(q) > JOINT_LIMIT and applies no epsilon, so a state sitting
-    exactly ON a limit round-trips to 1.5700000000000003 and is rejected -- an
-    artefact of testing an infinitely thin set, not a defect worth an epsilon in
-    the solver. Poses that need a joint exactly at its stop are not poses to plan
-    for anyway.
-    """
-    span = 0.999 * LIM
-    vals = [-span + 2.0 * span * i / (n - 1) for i in range(n)]
+    """All n**5 combinations, each joint spanning its own range."""
+    vals = joint_span(0, n)
+    rest = joint_span(1, n)
     for a in vals:
-        for b in vals:
-            for c in vals:
-                for d in vals:
-                    for e in vals:
+        for b in rest:
+            for c in rest:
+                for d in rest:
+                    for e in rest:
                         yield [a, b, c, d, e]
 
 
 def random_joints(count, seed=20260730):
     import random
     rng = random.Random(seed)
-    return [[rng.uniform(-LIM, LIM) for _ in range(5)] for _ in range(count)]
+    return [[rng.uniform(lo, hi) for lo, hi in K.JOINT_LIMITS]
+            for _ in range(count)]
 
 
 def in_plane_radius(joints, tip='tcp'):
@@ -312,8 +324,54 @@ def test_rejects_yaw_beyond_limit():
     """Straight back (-x) is geometrically fine but needs theta1 = pi."""
     reach = 0.20
     assert K.ik(-reach, 0.0, 0.20, pi / 2) is None
-    with pytest.raises(Unreachable, match='arm1_Joint|theta1'):
+    with pytest.raises(Unreachable, match='arm1_Joint'):
         K.ik(-reach, 0.0, 0.20, pi / 2, strict=True)
+
+
+@needs_urdf
+def test_joint_limits_match_the_urdf_exactly():
+    """Transcription check. These are read from <limit> tags, not assumed equal.
+
+    They are NOT all the same and arm1 is NOT symmetric -- treating them as one
+    number silently clipped the base yaw to +-90 and cost 19 degrees of working
+    sector on each side.
+    """
+    import xml.etree.ElementTree as ET
+    joints = {j.get('name'): j for j in ET.parse(_URDF).getroot().findall('joint')}
+    for name, (lo, hi) in zip(K.JOINT_NAMES, K.JOINT_LIMITS):
+        limit = joints[name].find('limit')
+        assert float(limit.get('lower')) == pytest.approx(lo, abs=1e-9), name
+        assert float(limit.get('upper')) == pytest.approx(hi, abs=1e-9), name
+
+
+def test_base_yaw_sector_is_wider_than_180_degrees():
+    """The arm sweeps 217 degrees, not 180, and IK must use all of it."""
+    sector = degrees(K.reach_limits()['yaw_sector'])
+    assert sector == pytest.approx(217.0, abs=0.1)
+
+    def solvable(bearing, radius=0.20, z=0.10):
+        """Any tool pitch that reaches this bearing, as pick_place would sweep."""
+        x = radius * cos(radians(bearing))
+        y = radius * sin(radians(bearing))
+        return next((p / 100.0 for p in range(100, 315)
+                     if K.ik_best(x, y, z, p / 100.0) is not None), None)
+
+    # Bearings outside a +-90 sector but inside this arm's real one.
+    for bearing in (100.0, -100.0, 106.0, -106.0):
+        assert solvable(bearing) is not None, \
+            'bearing %.0f deg should be reachable somewhere in pitch' % bearing
+
+    # ...and past the real stop it must still be refused, at every pitch.
+    for bearing in (115.0, -115.0, 180.0):
+        assert solvable(bearing) is None, \
+            'bearing %.0f deg is past arm1_Joint and must be refused' % bearing
+
+
+def test_in_limits_uses_each_joints_own_range():
+    assert K.in_limits([1.88, 0.0, 0.0, 0.0, 0.0])      # arm1 may exceed 1.57
+    assert not K.in_limits([1.91, 0.0, 0.0, 0.0, 0.0])  # but not its own stop
+    assert not K.in_limits([0.0, 1.60, 0.0, 0.0, 0.0])  # arm2 may not
+    assert K.in_limits([-1.90, -1.57, 1.57, -1.57, 1.57])
 
 
 def test_rejects_solution_violating_a_wrist_limit():
@@ -368,14 +426,17 @@ def test_ik_best_keeps_a_cartesian_segment_on_one_branch():
 
     A 170 mm vertical lift at x = 0.26, phi = 1.9 -- about the longest
     straight-line move this arm has at a fixed pitch, and the shape of the lift
-    in the pick sequence. Re-seeding from the previous waypoint must never
-    produce a discontinuous jump, which is exactly what cartesian_move relies on.
+    in the pick sequence. The z span tracks Z0: it dropped 17.5 mm when the
+    shoulder height was corrected to the physical arm's short standoffs.
+
+    Re-seeding from the previous waypoint must never produce a discontinuous
+    jump, which is exactly what cartesian_move relies on.
     """
     n = 40
     seed = None
     prev = None
     for i in range(n + 1):
-        z = 0.02 + 0.17 * i / n
+        z = 0.00 + 0.17 * i / n
         s = K.ik_best(0.26, 0.0, z, 1.9, seed=seed)
         assert s is not None, 'segment left the workspace at z=%.3f' % z
         if prev is not None:
@@ -401,7 +462,7 @@ def test_roll_passes_through_and_shifts_the_tcp_slightly():
 
 def test_reach_limits_are_self_consistent():
     lim = K.reach_limits()
-    assert lim['shoulder_height'] == pytest.approx(0.1255)
+    assert lim['shoulder_height'] == pytest.approx(0.1075)
     assert lim['upper_arm'] == pytest.approx(K.L1 + K.L2)
     assert lim['tool_length'] == pytest.approx(0.146319, abs=1e-6)
     assert lim['max_height'] == pytest.approx(
@@ -434,18 +495,18 @@ def test_describe_explains_both_outcomes():
 LESSON_STATES = {
     # Yahboom "Forward Kinematics Design" / "Scene Design"
     'fk_design': ([0.0, 0.52, 0.786, 0.20, 0.0],
-                  (0.266751155, 0.000702552, 0.233340829, 1.506, 0.0)),
+                  (0.266751155, 0.000702552, 0.215340829, 1.506, 0.0)),
     # "Trajectory Planning", the three sequential targets
     'traj_1': ([1.57, -1.00, -0.61, 0.20, 0.0],
-               (-0.000939558, -0.297623578, 0.185692428, -1.41, 0.0)),
+               (-0.000939558, -0.297623578, 0.167692428, -1.41, 0.0)),
     'traj_2': ([0.0, 0.0, 0.0, 0.0, 0.0],
-               (-0.004800000, 0.000702552, 0.437440000, 0.0, 0.0)),
+               (-0.004800000, 0.000702552, 0.419440000, 0.0, 0.0)),
     'traj_3': ([-1.16, -0.50, -0.81, -0.79, 1.57],
-               (-0.099660595, 0.223679890, 0.143799967, -2.10, 1.57)),
+               (-0.099660595, 0.223679890, 0.125799967, -2.10, 1.57)),
     # our own SRDF 'init' -- kept as a vector even though the named state is
     # being replaced, because it is a useful non-trivial posture
     'srdf_init': ([0.0, -1.57, 1.57, 1.57, 0.0],
-                  (0.063386158, 0.000702552, 0.213332429, 1.57, 0.0)),
+                  (0.063386158, 0.000702552, 0.195332429, 1.57, 0.0)),
 }
 
 
@@ -487,20 +548,20 @@ def test_lesson_ik_target_is_reachable_over_a_band_of_pitches():
               if K.ik_best(x, y, z, radians(d)) is not None]
     assert solved, 'the lessons\' IK target came out unreachable'
     # A contiguous band around ~70 deg from vertical; nothing near top-down.
-    assert 1.0 < min(solved) < 1.2
-    assert 1.4 < max(solved) < 1.5
+    assert 0.9 < min(solved) < 1.1
+    assert 1.25 < max(solved) < 1.45
     assert len(solved) == round(degrees(max(solved) - min(solved))) + 1, \
         'expected one contiguous band of feasible pitches'
 
 
 def test_lesson_ik_target_solution_is_exact():
     x, y, z = LESSON_IK_TARGET
-    phi = 1.3963            # 80 deg from vertical -- the Pro's grasp pitch
+    phi = 1.30              # inside the band this target admits at Z0=0.108
     s = K.ik_best(x, y, z, phi)
     assert s is not None
     assert max_abs_diff(K.fk(s)[:3], (x, y, z)) < 1e-12
     assert K.fk(s)[3] == pytest.approx(phi, abs=1e-12)
-    assert all(abs(q) <= K.JOINT_LIMIT for q in s)
+    assert K.in_limits(s)
     # theta1 is fixed by the target bearing alone, independent of phi -- less the
     # ~6 mrad the 0.6 mm lateral tool offset costs at this radius.
     lat = K.reach_limits()['lateral_offset']

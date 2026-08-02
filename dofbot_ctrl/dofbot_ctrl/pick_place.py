@@ -3,13 +3,16 @@
 """
 Pick and place, driven by coordinates rather than by RViz.
 
-    ros2 run dofbot_ctrl pick_place -- 0.22 0.0 0.0
-    ros2 run dofbot_ctrl pick_place -- --object soda_can 0.22 0.0 0.046
-    ros2 run dofbot_ctrl pick_place -- --plan-only 0.22 0.0 0.0
+    # a 30 mm test_block on the floor: centre is half its height up
+    ros2 run dofbot_ctrl pick_place -- 0.22 0.0 0.015
+    # a 122 mm soda_can standing on the floor
+    ros2 run dofbot_ctrl pick_place -- --object soda_can 0.22 0.0 0.061
+    ros2 run dofbot_ctrl pick_place -- --plan-only 0.22 0.0 0.015
     ros2 run dofbot_ctrl pick_place -- --check-states
 
 `pick(x, y, z)` is the whole point of this file, and the seam the perception
-layer will attach to. (x, y, z) is the CENTRE of the object in base_link. A
+layer will attach to. (x, y, z) is the CENTRE of the object in base_link -- so
+for something resting on the floor, z is half the catalogue height, NOT 0. A
 depth camera returns a point on the near surface, so whoever calls this steps
 along the view ray by the object radius first -- deliberately, once, in the
 caller, instead of Yahboom's blind +0.02/+0.01/+0.01 fudge constants which
@@ -46,28 +49,27 @@ which one it used, so tuning on hardware is a matter of reading the log.
 
 HOVER: THE TCP IS NOT WHERE THE JAWS GRIP
 ----------------------------------------
-Gripping_point_Link is a fixed frame 68.09 mm from the wrist, but the jaw faces
-are mesh geometry that reaches past it, by an amount that CHANGES with the
-opening: the four-bar swings the fingers outward along the tool axis as it
-closes, so Rlink2_Link's origin travels from z = 0.398 wide open to z = 0.429
-fully shut while the TCP frame stays at 0.437.
+The object is held BETWEEN THE FINGERTIPS, and the fingertips are nowhere near
+Gripping_point_Link. That frame sits a fixed 68.09 mm from the wrist, while the
+fingers reach PAST it -- 11.7 mm wide open, 42.1 mm shut -- because the four-bar
+swings them outward along the tool axis as it closes.
 
-So the arm does not drive the TCP onto the object -- it stops short and lets the
-closing motion reach down and in. `_hover` finds how far short, by backing the
-TCP off along the tool axis until the state is clear with the jaws at the angle
-the object stops them at. At x = 0.22, phi = 2.6, a 30 mm block on the floor
-wants about 20 mm of hover.
+So the TCP target is the grasp point pulled back along the tool axis by
+gripper.tip_offset_for(width): 33.0 mm for a 30 mm object. Get this wrong in the
+optimistic direction and the arm drives itself into the object up to the
+knuckles rather than pinching it at the tips -- which is exactly what it looks
+like in RViz.
 
-That distance is exactly gripper.tip_offset_for(), which is 0.0 because it has
-never been measured with calipers. Nothing depends on that zero: the search
-finds the value against the live scene and logs it, so calibrating later turns a
-search into a check. Note it is also the reason a squeeze angle must not be
-collision-checked -- the object holds the jaws open at its own width, so the
-commanded angle past contact is a pose the gripper never occupies.
+Related, and the same mistake in a different place: never collision-check the
+COMMANDED jaw angle. grip_angle_for() deliberately asks for narrower than the
+object so the servo loads up against it, but the object stops the jaws at its
+own width, so the commanded angle is a pose the gripper never occupies while
+holding anything. Check jaw_angle_for(width).
 """
 
 import argparse
 import sys
+from math import atan2, degrees, hypot, pi
 
 import rclpy
 from rclpy.node import Node
@@ -87,11 +89,21 @@ class PickPlace(Node):
         self.declare_parameter('object', 'test_block')
         self.declare_parameter('standoff', 0.08)      # pre-grasp, m along tool
         self.declare_parameter('grasp_pitch', 2.6)    # phi, rad from vertical
-        self.declare_parameter('pitch_search', 0.6)   # how far to sweep, rad
-        self.declare_parameter('pitch_step', 0.05)
+        # Sweep the whole range that can reach DOWN onto a supported object:
+        # pi/2 is a horizontal tool, pi is straight down. Anything shallower
+        # points the tool upwards and cannot grasp something standing on a
+        # surface. Candidates are tried nearest-to-grasp_pitch first.
+        self.declare_parameter('pitch_min', pi / 2.0)
+        self.declare_parameter('pitch_max', pi)
+        # 0.01 rad, and that is not over-fine. Measured: the feasible band for a
+        # 30 mm block at (0.22, -0.20) is phi 2.32..2.34 -- 0.02 rad wide. A
+        # 0.05 step samples 2.30 and 2.35 and straddles it, reporting "no
+        # workable approach" for a pose the arm reaches comfortably. Stepping
+        # finer is nearly free: candidates are screened by analytic IK first,
+        # and only survivors cost a /check_state_validity round trip.
+        self.declare_parameter('pitch_step', 0.01)
         self.declare_parameter('lift', 0.10)          # straight-up retreat, m
         self.declare_parameter('min_lift', 0.03)      # enough to clear the floor
-        self.declare_parameter('max_hover', 0.05)     # tip-offset search limit, m
 
         self.mc = DofbotMoveIt(self)
         self.held = None            # the object currently attached, if any
@@ -122,32 +134,23 @@ class PickPlace(Node):
             d += step
         return best
 
-    def _hover(self, contact, phi, grip, limit, step=0.002):
-        """How far back along the tool axis the TCP must sit, at this pitch.
+    def _hover(self, obj):
+        """How far back along the tool axis the TCP sits from the grasp point.
 
-        Gripping_point_Link is a fixed frame 68.09 mm out, but the jaw faces are
-        mesh geometry that reaches PAST it, and by an amount that changes with
-        the opening -- the four-bar swings the fingers outward along the tool
-        axis as it closes. Putting the TCP straight onto the contact point
-        therefore drives the fingertips through whatever is behind it, which for
-        an object on the floor is floor_link.
+        The object is held BETWEEN THE FINGERTIPS, and the fingertips are not at
+        Gripping_point_Link. That frame is a fixed 68.09 mm from the wrist,
+        while the fingers reach past it by 12 mm wide open and 42 mm shut -- the
+        four-bar swings them outward along the tool axis as it closes. So the
+        arm must stop the TCP short of the object by exactly that much, which is
+        gripper.tip_offset_for() at the opening the object holds the jaws to.
 
-        So back the TCP off until the state is clear with the jaws at the angle
-        the object actually stops them at, and return the distance. This is the
-        "hover a little higher and let the closing motion reach down" the
-        gripper is designed for, measured rather than guessed -- and the number
-        it returns is what gripper.tip_offset_for() should eventually hold.
-
-        Returns None if no hover up to `limit` works.
+        This is a lookup, not a search. An earlier version searched for the
+        smallest backoff that was merely collision-free, which is the DEEPEST
+        reach that does not trip a contact -- the arm buried in the object up to
+        the knuckles instead of pinching it at the tips. Visible immediately in
+        RViz, and wrong in kind: "not colliding" is not the same as "gripping".
         """
-        d = 0.0
-        while d <= limit + 1e-9:
-            tcp = scene_objects.back_off(contact, phi, d) + (phi,)
-            joints = kin.ik_best(*tcp)
-            if joints is not None and self.mc.check_state(joints, grip)[0]:
-                return d
-            d += step
-        return None
+        return gripper.tip_offset_for(obj.grasp_width)
 
     def _feasible_approach(self, obj, x, y, z):
         """Choose a grasp pitch and hover that support the whole sequence.
@@ -170,38 +173,38 @@ class PickPlace(Node):
         anything, and checking it rejects perfectly good grasps.
         """
         preferred = float(self.get_parameter('grasp_pitch').value)
-        span = float(self.get_parameter('pitch_search').value)
+        lo = float(self.get_parameter('pitch_min').value)
+        hi = float(self.get_parameter('pitch_max').value)
         step = float(self.get_parameter('pitch_step').value)
         standoff = float(self.get_parameter('standoff').value)
         want_lift = float(self.get_parameter('lift').value)
         min_lift = float(self.get_parameter('min_lift').value)
-        max_hover = float(self.get_parameter('max_hover').value)
         grip = gripper.jaw_angle_for(obj.grasp_width)
 
-        candidates = [preferred]
-        k = 1
-        while k * step <= span:
-            candidates += [preferred - k * step, preferred + k * step]
-            k += 1
+        # The whole range, tried nearest the preferred pitch first, so a target
+        # that works at 2.6 still gets 2.6 and one that only works at 2.33 gets
+        # found instead of being reported unreachable.
+        n = int(round((hi - lo) / step))
+        candidates = sorted((lo + i * step for i in range(n + 1)),
+                            key=lambda p: abs(p - preferred))
 
         contact = scene_objects.grasp_point(obj, x, y, z)
+        hover = self._hover(obj)
         why = {}
         for phi in candidates:
-            hover = self._hover(contact, phi, grip, max_hover)
-            if hover is None:
-                tcp = contact + (phi,)
-                why[round(phi, 3)] = (
-                    kin.describe(*tcp) if kin.ik_best(*tcp) is None else
-                    'no hover up to %.0f mm clears: %s'
-                    % (max_hover * 1e3,
-                       self.mc.check_state(kin.ik_best(*tcp), grip)[1]))
-                continue
             grasp = scene_objects.back_off(contact, phi, hover) + (phi,)
             pre = scene_objects.back_off(contact, phi, hover + standoff) + (phi,)
             mid = tuple((a + b) / 2.0 for a, b in zip(pre[:3], grasp[:3])) + (phi,)
-            bad = next((p for p in (pre, mid) if kin.ik_best(*p) is None), None)
+            bad = next((p for p in (grasp, pre, mid)
+                        if kin.ik_best(*p) is None), None)
             if bad is not None:
                 why[round(phi, 3)] = kin.describe(*bad)
+                continue
+            # Check the grasp with the jaws where the OBJECT stops them, not at
+            # the commanded squeeze angle -- see the docstring.
+            valid, contacts = self.mc.check_state(kin.ik_best(*grasp), grip)
+            if not valid:
+                why[round(phi, 3)] = 'at the grasp: %s' % contacts
                 continue
             lift = self._reachable_lift(grasp, want_lift)
             if lift < min_lift:
@@ -217,18 +220,33 @@ class PickPlace(Node):
                     'lift limited to %.0f mm by reach (wanted %.0f)'
                     % (lift * 1e3, want_lift * 1e3))
             self.get_logger().info(
-                'hover %.0f mm back from the contact point (gripper.'
-                'tip_offset_for(%.3f) is %.0f mm; calibrate it and this search '
-                'becomes a check)'
-                % (hover * 1e3, obj.grasp_width,
-                   gripper.tip_offset_for(obj.grasp_width) * 1e3))
+                'TCP held %.1f mm back from the grasp point, so the FINGERTIPS '
+                'land on it (gripper.tip_offset_for(%.3f))'
+                % (hover * 1e3, obj.grasp_width))
             return phi, pre, grasp, lift, hover
 
+        # Say whether this is a reach problem or a posture problem, because the
+        # two want opposite responses: drive closer, versus try another pitch.
+        limits = kin.reach_limits()
+        span = hypot(hypot(contact[0], contact[1]), contact[2] - kin.Z0)
+        bearing = degrees(atan2(contact[1], contact[0]))
+        yaw_lo, yaw_hi = (degrees(a) for a in limits['yaw_range'])
+        if span > limits['max_reach_from_shoulder']:
+            reason = ('the grasp point is %.3f m from the shoulder, past the '
+                      '%.3f m the arm can span -- move the base closer'
+                      % (span, limits['max_reach_from_shoulder']))
+        elif not yaw_lo <= bearing <= yaw_hi:
+            reason = ('bearing %.0f deg is outside arm1_Joint\'s %.0f..%.0f deg '
+                      'sector -- turn the base' % (bearing, yaw_lo, yaw_hi))
+        else:
+            reason = ('within reach (%.3f m of %.3f, bearing %.0f deg) but no '
+                      'posture works. Nearest attempt, phi=%.2f: %s'
+                      % (span, limits['max_reach_from_shoulder'], bearing,
+                         preferred, why.get(round(preferred, 3), '?')))
         raise MoveItError(
-            'no workable approach to (%.3f, %.3f, %.3f) for %s over pitches '
-            '%.2f..%.2f. At the preferred %.2f: %s'
-            % (x, y, z, obj.name, min(why), max(why), preferred,
-               why[round(preferred, 3)]))
+            'no workable approach to (%.3f, %.3f, %.3f) for %s: %s '
+            '(swept phi %.2f..%.2f in %.3f rad steps, %d candidates)'
+            % (x, y, z, obj.name, reason, lo, hi, step, len(candidates)))
 
     # ------------------------------------------------------------------- pick
 
@@ -330,8 +348,9 @@ class PickPlace(Node):
         worst = True
         for name in sorted(NAMED_STATES):
             joints = NAMED_STATES[name]
-            over = [n for n, q in zip(kin.JOINT_NAMES, joints)
-                    if abs(q) > kin.JOINT_LIMIT]
+            over = [n for n, q, (lo, hi)
+                    in zip(kin.JOINT_NAMES, joints, kin.JOINT_LIMITS)
+                    if not lo <= q <= hi]
             valid = self.mc.state_valid(joints, verbose=True)
             x, y, z, phi, roll = kin.fk(joints)
             self.get_logger().info(

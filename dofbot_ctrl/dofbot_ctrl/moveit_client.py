@@ -131,15 +131,15 @@ NAMED_STATES = {
     #                theta1  theta2   theta3   theta4  theta5
     'up':         (0.0,     0.0,     0.0,     0.0,    0.0),
     'down':       (0.0,     1.57,    0.0,     0.0,    0.0),
-    # folded and compact, TCP (0.091, 0.002, 0.196) phi=1.885 -- the rest/stow
+    # folded and compact, TCP (0.091, 0.002, 0.178) phi=1.885 -- the rest/stow
     # pose, hand-posed on the real arm; see the note above on arm4
     'init':       (0.0175, -1.1694,  1.5010,  1.5533, 0.0),
-    # observation: arm up and tucked back, TCP (0.100, 0, 0.340) phi=1.0, so the
+    # observation: arm up and tucked back, TCP (0.100, 0, 0.322) phi=1.0, so the
     # chassis camera has a clear view of the floor in front
     'ready':      (0.0,    -0.7932,  1.2775,  0.5157, 0.0),
-    # arm high and tucked, TCP (0.100, 0, 0.300) phi=1.4 -- safe to drive with
+    # arm high and tucked, TCP (0.100, 0, 0.282) phi=1.4 -- safe to drive with
     'carry':      (0.0,    -0.7112,  0.8416,  1.2695, 0.0),
-    # release pose, TCP (0.150, 0.150, 0.300) phi=1.4, front-left and high.
+    # release pose, TCP (0.150, 0.150, 0.282) phi=1.4, front-left and high.
     # This one is SITE-SPECIFIC: it assumes a bin whose rim is below ~0.3 m and
     # is within reach off the left front. Re-measure it for the actual bin.
     'over_trash': (0.7821,  0.6963, -0.5057,  1.2094, 0.0),
@@ -307,10 +307,10 @@ class DofbotMoveIt:
         /check_state_validity names the pair.
         """
         joints = [float(q) for q in joints]
-        for name, q in zip(ARM_JOINT_NAMES, joints):
-            if abs(q) > kin.JOINT_LIMIT:
-                raise MoveItError('%s = %.3f rad is outside +-%.2f'
-                                  % (name, q, kin.JOINT_LIMIT))
+        for name, q, (lo, hi) in zip(ARM_JOINT_NAMES, joints, kin.JOINT_LIMITS):
+            if not lo <= q <= hi:
+                raise MoveItError('%s = %.3f rad is outside its %.3f..%.3f range'
+                                  % (name, q, lo, hi))
         if check_goal:
             valid, contacts = self.check_state(joints)
             if not valid:

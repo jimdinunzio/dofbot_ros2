@@ -4,7 +4,7 @@ The stack `pick_place` needs: MoveIt on mock joints, plus the servo bridge.
     # on the robot, driving the real arm
     ros2 launch dofbot_ctrl pick_place.launch.py
     # simulation only -- no serial port touched, safe anywhere
-    ros2 launch dofbot_ctrl pick_place.launch.py bridge:=false
+    ros2 launch dofbot_ctrl pick_place.launch.py rviz:=false bridge:=false
     # headless (e.g. over ssh), with RViz run separately on a laptop
     ros2 launch dofbot_ctrl pick_place.launch.py rviz:=false
 
@@ -22,7 +22,8 @@ ignoring...", CONTROL_FAILED, and an arm driven by two controllers at once.
 then, in another terminal:
 
     ros2 run dofbot_ctrl pick_place -- --check-states
-    ros2 run dofbot_ctrl pick_place -- 0.22 0.0 0.0
+    # x y z is the object CENTRE in base_link; 0.015 is a 30 mm block on the floor
+    ros2 run dofbot_ctrl pick_place -- 0.22 0.0 0.015
 
 This is dofbot_moveit's demo.launch.py plus moveit_bridge, with two nodes
 deliberately left out:
