@@ -88,8 +88,12 @@
         <joint name="arm4_Joint" value="1.2094"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
+    <!-- Not the joint's lower limit. The linkage is over-centre: span peaks with
+         the gear arms parallel and falls away on both sides, and that peak sits
+         a little above the limit, so commanding 0 opens LESS wide. Keep this in
+         step with gripper.OPEN_ANGLE. See joint_map. -->
     <group_state name="open" group="grip_group">
-        <joint name="Rlink1_Joint" value="0"/>
+        <joint name="Rlink1_Joint" value="0.034"/>
     </group_state>
     <group_state name="close" group="grip_group">
         <joint name="Rlink1_Joint" value="1.5"/>

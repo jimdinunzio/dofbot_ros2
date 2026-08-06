@@ -70,6 +70,7 @@ from shape_msgs.msg import SolidPrimitive
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from dofbot_ctrl import dofbot_kinematics as kin
+from dofbot_ctrl import gripper
 from dofbot_ctrl.joint_map import ARM_JOINT_NAMES, GRIPPER_JOINT_NAME
 
 ARM_GROUP = 'arm_group'
@@ -560,7 +561,10 @@ class DofbotMoveIt:
         return result
 
     def open_gripper(self):
-        return self.set_gripper(0.0)
+        # gripper.OPEN_ANGLE, not 0.0. The linkage is over-centre and its span
+        # peaks a little above the joint's lower limit; commanding 0 opens
+        # slightly less wide. Matches the SRDF 'open' state.
+        return self.set_gripper(gripper.OPEN_ANGLE)
 
     def close_gripper(self, angle=1.5):
         return self.set_gripper(angle)

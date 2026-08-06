@@ -45,17 +45,28 @@ def _center(sid):
 # Gripper: servo 6 degrees <-> the vendor's "grip angle", which is
 # Rlink1_Joint in degrees, offset by CENTER_DEG.
 # Endpoints are the empirical open/closed from the servo spec
-# (YB-SD15M_Bus_Servo_Protocol.csv, section C): servo 0 = fully open,
-# servo 170 = fully closed. This maps onto Rlink1_Joint's full URDF limit
-# [0, 1.570] and keeps commands within the servo's effective 0-170 range.
-# (The vendor's SimulateToArm.py used (30, 180), which clipped the open end
-# and overshot the closed stop.) Direction verified on hardware against the
-# RViz saved open/close states: servo 0 really is open and 170 really is shut,
-# so close_gripper() closes. Do not reverse this tuple.
+# (YB-SD15M_Bus_Servo_Protocol.csv, section C). Direction verified on hardware:
+# a low servo value is open and a high one is shut, so close_gripper() closes.
+# Do not reverse this tuple.
 #
-# The jaw GEOMETRY -- how far apart the jaws actually are at a given
-# Rlink1_Joint angle -- is a separate calibration and lives in gripper.py.
-_GRIP_SERVO_RANGE = (0.0, 170.0)
+# THE OPEN END IS NOT THE SERVO'S ZERO, AND THE REASON IS MECHANICAL. The linkage
+# is over-centre: the gear arms sweep up to parallel with the gripper body, which
+# is the WIDEST opening, and the servo can be driven past that point, at which
+# the arms tip up the other way and the jaws start closing again. Span is not
+# monotonic in servo value; it peaks at parallel. The open end of this range is
+# that peak, found by reading /joint_states with the gear arms visibly parallel.
+#
+# Pinning the peak to 0 rad matters beyond display. Rlink1_Joint's URDF lower
+# limit is 0, so that limit then lands on the peak and the planner cannot command
+# past it into the narrowing side.
+#
+# gripper.jaw_angle_for() also inverts span -> angle assuming span falls
+# monotonically as the angle grows, which is only true on this side of the peak.
+# That is a second reason 0 has to BE the peak.
+#
+# The jaw GEOMETRY -- how far apart the jaws are at a given Rlink1_Joint angle --
+# is a separate calibration in gripper.py, and its table is keyed to this range.
+_GRIP_SERVO_RANGE = (33.0, 169.0)
 _GRIP_ANGLE_RANGE = (90.0, 180.0)
 
 
