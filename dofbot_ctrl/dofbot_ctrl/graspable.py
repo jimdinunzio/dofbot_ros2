@@ -129,26 +129,26 @@ def register(obj):
     return obj
 
 
-# The goal object. The stock gripper CANNOT take it: 66 mm across against a
-# 60 mm maximum opening, so the jaw tips strike the wall on approach and knock
-# the can over rather than closing around it. There is no squeeze grip to fall
-# back on -- enclosing it is geometrically impossible. The only stock-gripper
-# option is the ~53 mm neck, a 10 mm band with +-5 mm tolerance, which is not a
-# reliability budget worth building on. Kept here as the target the motion layer
-# is written for; run it once a wider gripper is fitted, and grasp_width is then
-# the only number that needs revisiting.
+# The goal object. NEEDS THE EXTENDED FINGERS, and has been gripped with them on
+# hardware. The stock jaws cannot take it at all: the body is wider than they
+# open, so the tips strike the wall on approach and knock the can over rather
+# than closing around it. There is no squeeze grip to fall back on, and the only
+# stock-jaw option is the neck, a narrow band with a few mm of tolerance, which
+# is not a reliability budget worth building on.
 SODA_CAN = register(GraspableObject(
     name='soda_can',
     shape='cylinder',
     width=0.066,
     height=0.122,
     grasp_height=0.045,     # on the straight body, below the centre of mass
-    symmetric=True,
-    note='needs a gripper wider than the stock 60 mm; see gripper.py'))
+    symmetric=True))
 
-# What to develop and prove the whole sequence against today. Anything in the
-# 20-55 mm range works; a 30 mm cube is the object Yahboom's own demos use, so
-# it is also what any borrowed number was tuned for.
+# NEEDS THE STOCK JAWS: it passes straight between the extended fingers, which
+# stop too far apart to touch it. That trade runs the other way from the can, so
+# between the two profiles the arm handles both -- just never at the same time.
+# This is the develop-and-prove object and the one Yahboom's own demos use, so
+# any borrowed constant was tuned for it, which is a reason to keep it rather
+# than replace it with something wider.
 TEST_BLOCK = register(GraspableObject(
     name='test_block',
     shape='box',

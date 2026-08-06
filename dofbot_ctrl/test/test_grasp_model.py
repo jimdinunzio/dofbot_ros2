@@ -20,6 +20,9 @@ these still run without a robot. The tests skip cleanly if the messages are not
 on the path at all (e.g. pytest outside a sourced workspace).
 """
 
+import contextlib
+import importlib
+import os
 from math import cos, hypot, isclose, sin
 
 import pytest
@@ -34,86 +37,280 @@ scene_objects = pytest.importorskip(
 
 
 # ------------------------------------------------------------------- gripper
+#
+# The arm has two grippers and they swap, so most of these run twice. The
+# `profile` fixture reloads gripper.py with DOFBOT_GRIPPER set; because
+# graspable holds a reference to the module OBJECT and reload() mutates it in
+# place, the catalogue sees the swap too, which is exactly the behaviour under
+# test. The fixture restores the default afterwards so ordering cannot leak.
 
-def test_endpoints_are_the_measured_ones():
-    """0 mm shut, 60 mm open, matching the SRDF open/close states."""
-    assert gripper.jaw_width_for(gripper.OPEN_ANGLE) == pytest.approx(0.060)
-    assert gripper.jaw_width_for(gripper.CLOSE_ANGLE) == pytest.approx(0.0)
-    assert gripper.jaw_angle_for(0.060 - gripper.CLEARANCE) < gripper.CLOSE_ANGLE
-    assert gripper.MAX_WIDTH == pytest.approx(0.060)
+@contextlib.contextmanager
+def as_profile(name):
+    """Run a block with `name` bolted on, then put the default back.
+
+    reload() mutates the single module OBJECT rather than making a second one,
+    so the two profiles cannot be held side by side -- a test that wants both
+    has to enter this twice and keep the numbers, not the module. That is also
+    why GripperError must be caught as ValueError below: each reload defines a
+    fresh class object, and the one captured before the reload is not it.
+    """
+    old = os.environ.get(gripper.ENV_VAR)
+    os.environ[gripper.ENV_VAR] = name
+    try:
+        yield importlib.reload(gripper)
+    finally:
+        if old is None:
+            os.environ.pop(gripper.ENV_VAR, None)
+        else:
+            os.environ[gripper.ENV_VAR] = old
+        importlib.reload(gripper)
 
 
-def test_width_and_angle_invert_each_other():
-    for mm in range(0, 58):
-        w = mm / 1000.0
-        assert gripper.jaw_width_for(gripper.jaw_angle_for(w)) == pytest.approx(
+@pytest.fixture(params=['stock', 'extended'])
+def profile(request):
+    with as_profile(request.param) as g:
+        yield g
+
+
+def test_extended_is_the_default_profile():
+    """What is bolted on the arm today, so an unset variable must mean it."""
+    assert gripper.PROFILE == 'extended'
+    assert gripper.DEFAULT_PROFILE == 'extended'
+
+
+def test_an_unknown_profile_refuses_to_load():
+    """Silently guessing would plan to the wrong fingertips.
+
+    The URDF cannot raise and resolves anything non-'stock' to the extended
+    fingers, so the Python side has to be the one that stops.
+    """
+    # ValueError, not GripperError: the reload that raises also rebinds the
+    # class, so the exception is an instance of one this scope has never seen.
+    with pytest.raises(ValueError, match='not a gripper'):
+        with as_profile('exteded'):                      # a plausible typo
+            pass
+    assert gripper.PROFILE == 'extended'                 # and it recovered
+
+
+def test_endpoints_are_the_measured_ones(profile):
+    """Stock 0-60 mm; extended 50-105 mm and never shuts."""
+    expected = {'stock': (0.0, 0.060), 'extended': (0.050, 0.105)}
+    shut, wide = expected[profile.PROFILE]
+    assert profile.jaw_width_for(profile.OPEN_ANGLE) == pytest.approx(wide)
+    assert profile.jaw_width_for(profile.CLOSE_ANGLE) == pytest.approx(shut)
+    assert profile.MAX_WIDTH == pytest.approx(wide)
+    assert profile.MIN_WIDTH == pytest.approx(shut)
+    assert profile.CLOSE_ANGLE == pytest.approx(1.5708)
+    # OPEN_ANGLE is NOT the joint's lower limit on the extended fingers. That
+    # linkage is over-centre and its widest point sits at 0.034 rad, measured on
+    # hardware; commanding the limit of 0 opens slightly less. The stock table
+    # has never been swept finely enough to know whether it does the same.
+    assert profile.OPEN_ANGLE == pytest.approx(
+        {'stock': 0.0, 'extended': 0.034}[profile.PROFILE])
+
+
+def _sweep(g, step=1):
+    """Every whole mm this profile will actually accept."""
+    lo = int(round(g.SAFE_MIN_WIDTH * 1e3))
+    hi = int(round(g.SAFE_MAX_WIDTH * 1e3))
+    return [mm / 1000.0 for mm in range(lo, hi + 1, step)]
+
+
+def test_width_and_angle_invert_each_other(profile):
+    for w in _sweep(profile):
+        assert profile.jaw_width_for(profile.jaw_angle_for(w)) == pytest.approx(
             w, abs=1e-9)
 
 
-def test_wider_object_means_a_smaller_angle():
+def test_wider_object_means_a_smaller_angle(profile):
     """Angle increases as the jaws close, so it must fall as width rises."""
-    angles = [gripper.jaw_angle_for(mm / 1000.0) for mm in range(0, 58, 5)]
+    angles = [profile.jaw_angle_for(w) for w in _sweep(profile, step=5)]
     assert all(a > b for a, b in zip(angles, angles[1:]))
 
 
-def test_rejects_what_it_cannot_open_to():
-    with pytest.raises(gripper.GripperError, match='66.0 mm'):
-        gripper.jaw_angle_for(0.066)          # the can, on the body
-    with pytest.raises(gripper.GripperError):
-        gripper.jaw_angle_for(gripper.SAFE_MAX_WIDTH + 1e-4)
-    with pytest.raises(gripper.GripperError, match='negative'):
-        gripper.jaw_angle_for(-0.001)
-    assert not gripper.fits(0.066)
-    assert gripper.fits(0.030)
+def test_rejects_what_it_cannot_open_to(profile):
+    with pytest.raises(profile.GripperError):
+        profile.jaw_angle_for(profile.SAFE_MAX_WIDTH + 1e-4)
+    with pytest.raises(profile.GripperError):
+        profile.jaw_angle_for(profile.SAFE_MIN_WIDTH - 1e-4)
+    with pytest.raises(profile.GripperError, match='negative'):
+        profile.jaw_angle_for(-0.001)
+    assert not profile.fits(profile.SAFE_MAX_WIDTH + 1e-4)
+    assert profile.fits(profile.SAFE_MIN_WIDTH)
+    assert profile.fits(profile.SAFE_MAX_WIDTH)
 
 
-def test_grip_angle_squeezes_past_contact():
+def test_the_can_and_the_block_swap_places_with_the_fingers():
+    """The headline trade. Neither profile takes both; each takes one.
+
+    66 mm will not go into the stock 60 mm jaws, and a 30 mm block falls
+    straight through fingers that stop 50 mm apart.
+    """
+    with as_profile('stock') as g:
+        assert not g.fits(0.066) and g.fits(0.030)
+        with pytest.raises(ValueError, match='66.0 mm'):
+            g.jaw_angle_for(0.066)
+    with as_profile('extended') as g:
+        assert g.fits(0.066) and not g.fits(0.030)
+        with pytest.raises(ValueError, match='pass straight between'):
+            g.jaw_angle_for(0.030)
+
+
+def test_a_rejection_names_the_other_gripper(profile):
+    """An object the other fingers would take is a screwdriver away, not a dead
+    end, and the error has to say so or the answer looks like 'impossible'."""
+    unreachable = {'stock': 0.066, 'extended': 0.030}[profile.PROFILE]
+    with pytest.raises(profile.GripperError) as exc:
+        profile.jaw_angle_for(unreachable)
+    assert profile.OTHER_PROFILE in str(exc.value)
+    assert 'DOFBOT_GRIPPER=%s' % profile.OTHER_PROFILE in str(exc.value)
+
+
+def test_grip_angle_squeezes_past_contact(profile):
     """The commanded angle must be tighter than exact contact, or nothing grips."""
-    contact = gripper.jaw_angle_for(0.030)
-    assert gripper.grip_angle_for(0.030) > contact
-    assert gripper.grip_angle_for(0.030) == pytest.approx(
-        gripper.jaw_angle_for(0.030 - gripper.DEFAULT_SQUEEZE))
-    # A nearly-shut object must not ask for an angle past the stop.
-    assert gripper.grip_angle_for(0.001) <= gripper.CLOSE_ANGLE
+    w = profile.SAFE_MIN_WIDTH + 0.010
+    assert profile.grip_angle_for(w) > profile.jaw_angle_for(w)
+    # Never past the mechanical stop, however hard it is asked to squeeze.
+    assert profile.grip_angle_for(w, squeeze=1.0) <= profile.CLOSE_ANGLE
+    # The squeeze overshoot must not be mistaken for an object that is too
+    # small: an object just inside the limit is still a legal grasp.
+    assert profile.grip_angle_for(profile.SAFE_MIN_WIDTH) <= profile.CLOSE_ANGLE
+    with pytest.raises(profile.GripperError):
+        profile.grip_angle_for(profile.SAFE_MIN_WIDTH - 1e-4)
 
 
-def test_tip_offset_is_positive_and_grows_as_the_jaws_close():
+def test_tip_offset_is_positive_and_grows_as_the_jaws_close(profile):
     """The fingers reach PAST Gripping_point_Link, further the tighter they shut.
 
     Sign and direction both matter and neither is observable from a passing pick
     -- get either wrong and the arm reaches through the object instead of
     pinching it at the tips, which only shows up when you look at RViz.
     """
-    assert gripper.tip_offset_for(gripper.MAX_WIDTH) > 0.0
-    offsets = [gripper.tip_offset_for(mm / 1000.0) for mm in range(0, 58, 5)]
+    assert profile.tip_offset_for(profile.MAX_WIDTH) > 0.0
+    offsets = [profile.tip_offset_for(w) for w in _sweep(profile, step=5)]
     assert all(a > b for a, b in zip(offsets, offsets[1:])), \
         'tip offset must fall as the object gets wider (jaws more open)'
-    assert gripper.tip_offset_for(0.030) == pytest.approx(0.0330, abs=1e-4)
-    assert gripper.tip_offset_for(0.0) == pytest.approx(0.0421, abs=1e-4)
 
 
-def test_widths_are_still_flagged_uncalibrated():
-    """The tip offsets come from the URDF; the widths are still a two-point stub."""
-    assert gripper.CALIBRATED is False
-    assert 'UNCALIBRATED' in gripper.describe(0.030)
+def test_tip_offsets_are_the_measured_ones():
+    """These are the hover distances, and drift here is the arm quietly driving
+    deeper into every object it picks up.
+
+    Stock comes from the arm5 -> Rlink1 -> Rlink2 chain onto the stock finger
+    mesh and is probably ~5 mm long; see the note on _STOCK.
+
+    BOTH ends of extended are touch-offs against the base plate's top face
+    (z = 3.0 mm): jaws shut, tf z = 92.0 -> 89.0 mm; jaws open, tf z = 63.0 with
+    a 2.6 deg tilt -> 60.1 mm. These two owe nothing to any model, so they are
+    the assertions that must not drift. Everything between them is the mesh's
+    curve affine-fitted onto these ends.
+    """
+    with as_profile('stock') as g:
+        assert g.tip_offset_for(0.030) == pytest.approx(0.0330, abs=1e-4)
+    with as_profile('extended') as g:
+        assert g.tip_offset_for(g.MIN_WIDTH) == pytest.approx(0.0890, abs=1e-4)
+        assert g.tip_offset_for(g.MAX_WIDTH) == pytest.approx(0.0601, abs=1e-4)
+        # the measured swing, which no rigid extension may change
+        assert g.tip_offset_for(g.MIN_WIDTH) - g.tip_offset_for(g.MAX_WIDTH) \
+            == pytest.approx(0.0289, abs=2e-4)
+        assert g.tip_offset_for(0.066) == pytest.approx(0.0882, abs=1e-4)
+
+
+def test_the_extension_lengthens_the_finger_by_a_constant():
+    """It bolts onto the end of the stock finger pointing the same way, so it
+    lengthens the reach without changing the shape of the curve. The constant
+    itself is not asserted to a tight value -- only the shut end is measured, and
+    the rise depends on a stock baseline that is itself mesh-derived. What is
+    worth pinning is that the two profiles stay parallel: if they ever stop
+    differing by a constant, someone has mixed up the meshes.
+
+    Do not tighten this into an exact figure derived from the meshes. The shut
+    end is anchored to a touch-off precisely because a mesh-derived constant here
+    can be self-consistent and still badly wrong.
+    """
+    stock_rows, _ = gripper._STOCK
+    ext_rows, _ = gripper._EXTENDED
+    for rows in (stock_rows, ext_rows):
+        assert rows[-1][0] == pytest.approx(1.5708)
+    assert stock_rows[0][0] == 0.0
+    assert ext_rows[0][0] == pytest.approx(0.034)   # the over-centre peak
+    open_rise = ext_rows[0][2] - stock_rows[0][2]
+    shut_rise = ext_rows[-1][2] - stock_rows[-1][2]
+    assert open_rise == pytest.approx(shut_rise, abs=2e-3)
+    assert 0.040 < shut_rise < 0.055
+
+
+def test_only_the_measured_profile_claims_to_be_calibrated():
+    """Extended widths came off calipers; the stock ones are still a two-point
+    stub with the tip offsets derived from the URDF."""
+    with as_profile('extended') as g:
+        assert g.CALIBRATED is True
+        assert 'UNCALIBRATED' not in g.describe(0.066)
+    with as_profile('stock') as g:
+        assert g.CALIBRATED is False
+        assert 'UNCALIBRATED' in g.describe(0.030)
+
+
+def test_the_measured_span_curve_is_not_a_straight_line():
+    """Why the full sweep was worth taking. A two-point fit between 105 mm and
+    50 mm is ~8 mm out mid-travel, which is a whole object's worth of error.
+
+    The curve is also the flatter half of an over-centre linkage whose span
+    PEAKS at 0 rad and falls away on both sides; see joint_map. Everything here
+    assumes 0 is that peak, so span falls monotonically across this table.
+    """
+    mid = 1.5708 / 2.0
+    linear = 0.105 + (0.050 - 0.105) * (mid / 1.5708)
+    with as_profile('extended') as g:
+        assert abs(g.jaw_width_for(mid) - linear) > 0.008
+        widths = [g.jaw_width_for(a / 100.0) for a in range(0, 158, 5)]
+        assert all(a >= b for a, b in zip(widths, widths[1:])), \
+            'span must fall monotonically from the over-centre peak at 0 rad'
+
+
+def test_the_can_is_held_where_the_robot_actually_held_it():
+    """Ground truth: the can was gripped on hardware and the servo settled here.
+
+    DEFAULT_SQUEEZE was calibrated in the pre-re-key coordinates and was not
+    adjusted afterwards, so this passing is a real check rather than a tautology:
+    a squeeze fitted in the old frame still lands on the same PHYSICAL grip in
+    the new one, which is what a coordinate change should leave alone.
+    """
+    with as_profile('extended') as g:
+        assert g.grip_angle_for(0.066) == pytest.approx(1.411, abs=0.003)
+        # The squeeze is real travel past contact, not a rounding artefact.
+        assert g.grip_angle_for(0.066) > g.jaw_angle_for(0.066) + 0.04
+
+
+def test_squeeze_never_drives_past_the_stop(profile):
+    """A generous squeeze on a nearly-shut object must clamp, not overrun. With
+    the extended fingers the stop is 50 mm and objects start at 53, so this is
+    only 3 mm of margin and the clamp does real work."""
+    assert profile.grip_angle_for(profile.SAFE_MIN_WIDTH) <= profile.CLOSE_ANGLE
+    assert profile.grip_angle_for(profile.SAFE_MAX_WIDTH) <= profile.CLOSE_ANGLE
 
 
 # ----------------------------------------------------------------- catalogue
 
-def test_can_is_rejected_by_this_gripper_with_a_reason():
-    """The plan's headline constraint, pinned: 66 mm will not go in 60 mm."""
-    can = get('soda_can')
-    assert not can.fits_gripper()
-    with pytest.raises(ObjectError) as exc:
-        can.check()
-    assert '66.0 mm' in str(exc.value) and '60.0 mm' in str(exc.value)
-    assert 'gripper wider' in str(exc.value)         # the catalogue note
+def test_the_catalogue_follows_the_fitted_gripper():
+    """Which objects are graspable is a property of what is bolted on, so
+    fits_gripper() has to be a live question and not a stored verdict. The goal
+    object and the development object each work under exactly one profile."""
+    can, block = get('soda_can'), get('test_block')
+    assert can.fits_gripper() and can.check() is can          # default: extended
+    assert not block.fits_gripper()
+    with pytest.raises(ObjectError, match='pass straight between'):
+        block.check()
 
 
-def test_block_is_accepted():
-    block = get('test_block')
-    assert block.fits_gripper()
-    assert block.check() is block
+def test_the_catalogue_follows_the_other_gripper_too():
+    can, block = get('soda_can'), get('test_block')
+    with as_profile('stock'):
+        assert block.fits_gripper() and block.check() is block
+        assert not can.fits_gripper()
+        with pytest.raises(ObjectError) as exc:
+            can.check()
+        assert '66.0 mm' in str(exc.value) and '60.0 mm' in str(exc.value)
 
 
 def test_defaults_fill_in_and_are_consistent():
