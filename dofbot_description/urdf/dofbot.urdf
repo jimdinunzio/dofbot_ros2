@@ -3,7 +3,25 @@
      Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
+  xmlns:xacro="http://www.ros.org/wiki/xacro"
   name="dofbot_description">
+  <!-- Which gripper is bolted on. The bolt-on finger extensions come off with a
+       screwdriver, so this file describes two robots and the environment picks:
+       DOFBOT_GRIPPER=stock drops the extension meshes, anything else (including
+       unset) keeps them.
+
+       dofbot_ctrl/gripper.py READS THE SAME VARIABLE to choose its jaw table.
+       Keep them agreeing. If this file says stock while gripper.py says
+       extended, every grasp is planned ~47 mm short of the real fingertips and
+       the arm drives into the object up to the knuckles.
+
+       It is an env var rather than a xacro:arg because urdf_launch runs xacro
+       with no arguments, and display, mirror and gui_teleop all load this file
+       through urdf_launch, so a xacro:arg could never be overridden there.
+       gripper.py rejects an unrecognised value outright; xacro cannot raise, so
+       it falls back to the extended fingers, and the mismatch stops the Python
+       layer rather than passing silently. -->
+  <xacro:property name="gripper_profile" value="$(optenv DOFBOT_GRIPPER extended)" />
   <link
     name="base_link">
     <inertial>
@@ -460,6 +478,50 @@
           filename="package://dofbot_description/meshes/Rlink2_Link.STL" />
       </geometry>
     </collision>
+    <!-- Bolt-on finger extension: a socket that slips over the end of the stock
+         finger and screws on. Measured on the part, it carries the tip 52 mm
+         beyond the stock one.
+
+         Exported fitted to the stock finger in this link's own frame, so it
+         needs no origin of its own. Export from Fusion in METRES: the first
+         attempt came out in Fusion's internal centimetres, exactly 100x small.
+
+         Sanity check if you touch these meshes: the socket must INTERSECT the
+         stock finger. It overlaps it by ~9.7 mm in x and by the blade's full
+         6.0 mm in z. An extension that shares no volume with the finger it
+         clamps onto is in the wrong frame, which is how the first export was
+         caught.
+
+         The socket cavity is filled by the finger it clamps onto, so a convex
+         hull is a fair collision proxy here, though at 730 triangles there is
+         nothing to gain by reducing it. Do NOT hull the two fingers together,
+         which would fill the gap the object sits in and read as permanently
+         closed. -->
+    <xacro:if value="${gripper_profile != 'stock'}">
+      <visual>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://dofbot_description/meshes/Rlink2_Link_Ext.STL" />
+        </geometry>
+        <material
+          name="">
+          <color
+            rgba="0.223529411764706 0.223529411764706 0.223529411764706 1" />
+        </material>
+      </visual>
+      <collision>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://dofbot_description/meshes/Rlink2_Link_Ext.STL" />
+        </geometry>
+      </collision>
+    </xacro:if>
   </link>
   <joint
     name="Rlink2_Joint"
@@ -579,6 +641,33 @@
           filename="package://dofbot_description/meshes/Llink2_Link.STL" />
       </geometry>
     </collision>
+    <!-- Bolt-on finger extension, mirror of the one on Rlink2_Link: same reach,
+         mirrored in y. See that link for the notes. -->
+    <xacro:if value="${gripper_profile != 'stock'}">
+      <visual>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://dofbot_description/meshes/Llink2_Link_Ext.STL" />
+        </geometry>
+        <material
+          name="">
+          <color
+            rgba="0.223529411764706 0.223529411764706 0.223529411764706 1" />
+        </material>
+      </visual>
+      <collision>
+        <origin
+          xyz="0 0 0"
+          rpy="0 0 0" />
+        <geometry>
+          <mesh
+            filename="package://dofbot_description/meshes/Llink2_Link_Ext.STL" />
+        </geometry>
+      </collision>
+    </xacro:if>
   </link>
   <joint
     name="Llink2_Joint"
