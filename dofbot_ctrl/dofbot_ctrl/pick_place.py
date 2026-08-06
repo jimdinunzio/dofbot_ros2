@@ -3,11 +3,14 @@
 """
 Pick and place, driven by coordinates rather than by RViz.
 
-    # a 30 mm test_block on the floor: centre is half its height up
-    ros2 run dofbot_ctrl pick_place -- 0.22 0.0 0.015
-    # a 122 mm soda_can standing on the floor
-    ros2 run dofbot_ctrl pick_place -- --object soda_can 0.22 0.0 0.061
-    ros2 run dofbot_ctrl pick_place -- --plan-only 0.22 0.0 0.015
+    # a soda can standing on the floor: (x, y, z) is its CENTRE, so z is half
+    # the catalogue height. The extensions want it further out than the stock
+    # jaws did -- see the reach note below.
+    ros2 run dofbot_ctrl pick_place -- 0.30 0.0 0.061
+    ros2 run dofbot_ctrl pick_place -- --plan-only 0.30 0.0 0.061
+    # the test block needs the stock jaws; the extensions cannot close on it
+    DOFBOT_GRIPPER=stock ros2 run dofbot_ctrl pick_place -- \
+        --object test_block 0.22 0.0 0.015
     ros2 run dofbot_ctrl pick_place -- --check-states
 
 `pick(x, y, z)` is the whole point of this file, and the seam the perception
@@ -50,15 +53,43 @@ which one it used, so tuning on hardware is a matter of reading the log.
 HOVER: THE TCP IS NOT WHERE THE JAWS GRIP
 ----------------------------------------
 The object is held BETWEEN THE FINGERTIPS, and the fingertips are nowhere near
-Gripping_point_Link. That frame sits a fixed 68.09 mm from the wrist, while the
-fingers reach PAST it -- 11.7 mm wide open, 42.1 mm shut -- because the four-bar
-swings them outward along the tool axis as it closes.
+Gripping_point_Link. That frame is fixed to the wrist, while the fingers reach
+PAST it and by a varying amount, because the four-bar swings them outward along
+the tool axis as it closes.
 
 So the TCP target is the grasp point pulled back along the tool axis by
-gripper.tip_offset_for(width): 33.0 mm for a 30 mm object. Get this wrong in the
-optimistic direction and the arm drives itself into the object up to the
-knuckles rather than pinching it at the tips -- which is exactly what it looks
-like in RViz.
+gripper.tip_offset_for(width). Get this wrong in the optimistic direction and
+the arm drives itself into the object up to the knuckles rather than pinching it
+at the tips -- which is exactly what it looks like in RViz.
+
+Which gripper is fitted is set by DOFBOT_GRIPPER, and dofbot.urdf reads the same
+variable. Nothing in this file needs to know which one it is, but if those two
+disagree the hover is wrong by the whole length of the extensions.
+
+LONGER FINGERS MOVE THE WORKING RING OUT, THEY DO NOT SHRINK IT
+---------------------------------------------------------------
+Worth knowing before chasing an unreachable target the wrong way. The hover backs
+the TCP off ALONG THE TOOL AXIS, and at a steep grasp pitch that direction is
+inward and upward, not outward. What limits these grasps is therefore the arm's
+MINIMUM radius, its inability to fold up tight, and a longer finger pushes the
+wrist further into it.
+
+So the reachable band for the can translates rather than narrowing. Swept
+offline against ik_best, it keeps its width and moves outward by roughly the
+increase in hover:
+
+    stock jaws        object x = 0.17 .. 0.28 m
+    extended fingers  object x = 0.25 .. 0.36 m
+
+The near edge is the one that bites: a can comfortably reachable on the stock
+jaws can be unreachable at ANY pitch with the extensions on. When a grasp will
+not solve, the fix is usually to move the base FURTHER AWAY, which is the
+opposite of the instinct. _feasible_approach reports the pitches it tried, so
+the log tells you which edge you are against.
+
+grasp_height is not sensitive over that sweep; the band barely moves across the
+usable range of grip heights. (Reachability only. Whether a tall can fouls the
+wrist once attached is a collision question, and only move_group answers it.)
 
 Related, and the same mistake in a different place: never collision-check the
 COMMANDED jaw angle. grip_angle_for() deliberately asks for narrower than the
@@ -86,7 +117,7 @@ class PickPlace(Node):
     def __init__(self):
         super().__init__('pick_place')
 
-        self.declare_parameter('object', 'test_block')
+        self.declare_parameter('object', 'soda_can')
         self.declare_parameter('standoff', 0.08)      # pre-grasp, m along tool
         self.declare_parameter('grasp_pitch', 2.6)    # phi, rad from vertical
         # Sweep the whole range that can reach DOWN onto a supported object:
@@ -95,12 +126,12 @@ class PickPlace(Node):
         # surface. Candidates are tried nearest-to-grasp_pitch first.
         self.declare_parameter('pitch_min', pi / 2.0)
         self.declare_parameter('pitch_max', pi)
-        # 0.01 rad, and that is not over-fine. Measured: the feasible band for a
-        # 30 mm block at (0.22, -0.20) is phi 2.32..2.34 -- 0.02 rad wide. A
-        # 0.05 step samples 2.30 and 2.35 and straddles it, reporting "no
-        # workable approach" for a pose the arm reaches comfortably. Stepping
-        # finer is nearly free: candidates are screened by analytic IK first,
-        # and only survivors cost a /check_state_validity round trip.
+        # Must be fine enough not to step OVER the feasible band. At a
+        # floor-level grasp that band can be a couple of hundredths of a radian
+        # wide, and a coarse step straddles it and reports "no workable
+        # approach" for a pose the arm reaches comfortably. Stepping finer is
+        # nearly free: candidates are screened by analytic IK first, and only
+        # survivors cost a /check_state_validity round trip.
         self.declare_parameter('pitch_step', 0.01)
         self.declare_parameter('lift', 0.10)          # straight-up retreat, m
         self.declare_parameter('min_lift', 0.03)      # enough to clear the floor
@@ -119,11 +150,10 @@ class PickPlace(Node):
         """How far straight up the tool can go from `grasp`, at most `want`.
 
         The lift has to be measured, not assumed. At a steep grasp pitch the
-        reachable band in z is only a few centimetres deep -- from a 30 mm block
-        at x = 0.22 with phi = 2.6, straight up runs out at 95 mm -- so a fixed
-        100 mm retreat is unreachable about as often as not. Taking what is
-        available and reporting it beats failing the whole pick over the last
-        5 mm of a move whose only job is to clear the floor.
+        reachable band in z is only a few centimetres deep, so a fixed retreat
+        is unreachable about as often as not. Taking what is available and
+        reporting it beats failing the whole pick over the last few mm of a
+        move whose only job is to clear the floor.
         """
         best = 0.0
         d = step
@@ -138,17 +168,17 @@ class PickPlace(Node):
         """How far back along the tool axis the TCP sits from the grasp point.
 
         The object is held BETWEEN THE FINGERTIPS, and the fingertips are not at
-        Gripping_point_Link. That frame is a fixed 68.09 mm from the wrist,
-        while the fingers reach past it by 12 mm wide open and 42 mm shut -- the
-        four-bar swings them outward along the tool axis as it closes. So the
-        arm must stop the TCP short of the object by exactly that much, which is
-        gripper.tip_offset_for() at the opening the object holds the jaws to.
+        Gripping_point_Link. That frame is fixed to the wrist while the fingers
+        reach past it, by more as they close, because the four-bar swings them
+        outward along the tool axis. So the arm must stop the TCP short of the
+        object by exactly that much, which is gripper.tip_offset_for() at the
+        opening the object holds the jaws to.
 
-        This is a lookup, not a search. An earlier version searched for the
-        smallest backoff that was merely collision-free, which is the DEEPEST
-        reach that does not trip a contact -- the arm buried in the object up to
-        the knuckles instead of pinching it at the tips. Visible immediately in
-        RViz, and wrong in kind: "not colliding" is not the same as "gripping".
+        This is a lookup, not a search. Do not replace it with a search for
+        the smallest collision-free backoff: that finds the DEEPEST reach which
+        does not trip a contact, burying the arm in the object up to the
+        knuckles instead of pinching it at the tips. "Not colliding" is not the
+        same as "gripping".
         """
         return gripper.tip_offset_for(obj.grasp_width)
 
