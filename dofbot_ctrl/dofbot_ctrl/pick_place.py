@@ -276,10 +276,17 @@ class PickPlace(Node):
             reason = ('bearing %.0f deg is outside arm1_Joint\'s %.0f..%.0f deg '
                       'sector -- turn the base' % (bearing, yaw_lo, yaw_hi))
         else:
+            # candidates[0] is the pitch NEAREST the preferred one, which is
+            # not the preferred one itself: the sweep walks lo + i*step, and
+            # nothing lands exactly on 2.6. Looking up `preferred` therefore
+            # always missed and printed '?', which is the least useful thing
+            # this message could say -- the whole point of `why` is to name the
+            # obstruction. Report the candidate actually tried.
+            closest = candidates[0]
             reason = ('within reach (%.3f m of %.3f, bearing %.0f deg) but no '
                       'posture works. Nearest attempt, phi=%.2f: %s'
                       % (span, limits['max_reach_from_shoulder'], bearing,
-                         preferred, why.get(round(preferred, 3), '?')))
+                         closest, why.get(round(closest, 3), '?')))
         raise MoveItError(
             'no workable approach to (%.3f, %.3f, %.3f) for %s: %s '
             '(swept phi %.2f..%.2f in %.3f rad steps, %d candidates)'
@@ -287,9 +294,52 @@ class PickPlace(Node):
 
     # ------------------------------------------------------------------- pick
 
+    def _clear(self, obj):
+        """Drop any copy of `obj` an earlier run left behind.
+
+        MUST happen before _feasible_approach. The sweep collision-checks each
+        candidate grasp against the LIVE scene, and a grasp puts the jaws around
+        the object, so a stale copy of the very thing being picked rejects every
+        candidate -- reported as "no workable approach ... but no posture works"
+        for a target the arm reaches comfortably. The object is re-added after
+        the sweep, together with the allowance that makes the grasp legal.
+
+        Leftovers are the normal case, not an edge: --plan-only deliberately
+        leaves the object standing so it can be looked at, --no-place ends with
+        it attached to the gripper, and any run that fails partway leaves it
+        wherever it got to. Each `ros2 run` is a fresh process with no memory of
+        the last one, so the scene is the only place that state lives.
+
+        The scene is READ before anything is deleted. detach() and remove() are
+        not no-ops on an object that is absent -- move_group returns
+        success=False and the client raises -- so deleting blind fails on every
+        clean run, which is most of them.
+
+        Detach before remove: removing a WORLD object does not touch an
+        ATTACHED one, and after --no-place the can is attached. Detaching puts
+        it back into the world, where remove() then takes it.
+        """
+        world, attached = self.mc.object_ids()
+        if obj.name not in world and obj.name not in attached:
+            self.markers.hide(obj)          # a drawing with nothing behind it
+            return
+
+        self.get_logger().info('clearing %r left in the scene by an earlier run'
+                               % obj.name)
+        if obj.name in attached:
+            self.mc.detach(obj.name)
+        self.mc.remove(obj.name)
+        # A run that died between allowing and forbidding leaves the pair
+        # allowed, which fails the other way -- a grasp validated against an
+        # object the gripper is permitted to pass straight through. Only
+        # reachable when something WAS there, which is exactly that case.
+        self.mc.allow_collisions(obj.name, GRIPPER_LINKS, False)
+        self.markers.hide(obj)
+
     def pick(self, x, y, z, name=None, plan_only=False):
         """Pick the object whose CENTRE is at (x, y, z) in base_link."""
         obj = self._object(name)
+        self._clear(obj)
         phi, pre, grasp, lift, hover = self._feasible_approach(obj, x, y, z)
         standoff = float(self.get_parameter('standoff').value)
 

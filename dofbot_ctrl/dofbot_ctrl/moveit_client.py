@@ -626,6 +626,27 @@ class DofbotMoveIt:
         prim.dimensions = [float(d) for d in size]
         return self._add(object_id, [prim], [self._pose(x, y, z)], frame_id)
 
+    def object_ids(self):
+        """(world_ids, attached_ids) currently in the planning scene.
+
+        Needed because remove() and detach() are NOT no-ops on something that
+        is not there: move_group logs "Tried to remove world object ... but it
+        does not exist" and returns success=False, which _apply_scene turns
+        into a MoveItError. So a caller tidying up after a previous run has to
+        look before it deletes.
+
+        Asks for NAMES only -- WORLD_OBJECT_GEOMETRY would ship every vertex of
+        every object back over the wire to answer "is it there?".
+        """
+        req = GetPlanningScene.Request()
+        req.components.components = (
+            PlanningSceneComponents.WORLD_OBJECT_NAMES
+            | PlanningSceneComponents.ROBOT_STATE_ATTACHED_OBJECTS)
+        scene = self._call(self._scene, req, 'get_planning_scene').scene
+        return ([o.id for o in scene.world.collision_objects],
+                [a.object.id for a in
+                 scene.robot_state.attached_collision_objects])
+
     def remove(self, object_id):
         obj = CollisionObject()
         obj.header.frame_id = BASE_FRAME

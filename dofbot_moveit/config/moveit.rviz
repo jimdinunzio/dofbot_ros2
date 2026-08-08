@@ -28,7 +28,20 @@ Visualization Manager:
       Planning Scene Topic: monitored_planning_scene
       Robot Description: robot_description
       Scene Geometry:
-        Scene Alpha: 1
+        # Was 1. The only world collision objects this robot ever has are
+        # graspable targets, and scene_markers now draws each of those as its
+        # real mesh at exactly the same place. Two coincident opaque surfaces
+        # z-fight, and MoveIt wins: you get its default green (50, 230, 50)
+        # cylinder with shards of the can flickering through it.
+        #
+        # Dropping the alpha puts the primitive in the transparent pass, so the
+        # mesh renders solid and the cylinder ghosts over it -- which is what
+        # you want to see anyway, since the cylinder is the thing actually
+        # planned against. Set it to 0 to hide the primitive entirely.
+        #
+        # The chassis and floor are NOT affected: chassis.xacro makes them real
+        # URDF links, so they draw as part of the robot, not as scene geometry.
+        Scene Alpha: 0.25
       Scene Robot:
         Robot Alpha: 0.5
       Value: true
