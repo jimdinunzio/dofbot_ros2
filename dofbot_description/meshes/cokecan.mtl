@@ -1,48 +1,22 @@
 # Blender 5.2.0 LTS MTL File: 'cokecan.blend'
 # www.blender.org
-#
-# HAND-EDITED AFTER EXPORT -- RE-APPLY AFTER ANY RE-EXPORT FROM BLENDER, which
-# overwrites this file.
-#
-# The can renders crisp in Blender and in Windows 3D Viewer and washed out in
-# RViz, and the material is why. Blender's OBJ exporter writes a large Ka
-# (0.48 on the label, 1.0 on the metal), which means nothing in the PBR
-# pipeline the model came from -- PBR has no ambient term, so those viewers
-# ignore it. Ogre, which is what RViz draws with, honours it literally and adds
-# Ka * ambient_light flat to every pixel. Roughly a quarter of full white laid
-# over the label, which lifts the reds toward grey: exactly "washed out".
-#
-# Ks 0.5 at Ns 656 is the same story from the other end -- a very tight, very
-# bright highlight, which on a cylinder is a hard white stripe down the side.
-#
-# illum 3 asks for a ray-traced reflection model. Nothing in this scene
-# reflects, so 2 (specular, no reflection) is what is actually wanted.
-#
-# Kd was absent from the label material entirely. With a diffuse texture bound
-# that usually works out, but it leaves the modulating colour up to whatever
-# the loader defaults to. Stating it as white makes the texture pass through
-# unchanged rather than by luck.
-#
-# Changed from the export: Ns, Ka, Ks, illum, and an added Kd. Nothing else,
-# and no geometry or UVs are affected.
 
 newmtl Insert_Label_Here
-Ns 60.000000
-Ka 0.100000 0.100000 0.100000
-Kd 1.000000 1.000000 1.000000
-Ks 0.120000 0.120000 0.120000
+Ns 656.099976
+Ka 0.480000 0.480000 0.480000
+Ks 0.500000 0.500000 0.500000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
-illum 2
+illum 3
 map_Kd cocacolacanimage.jpg
 
 newmtl Metal_part
-Ns 60.000000
-Ka 0.100000 0.100000 0.100000
+Ns 640.000000
+Ka 1.000000 1.000000 1.000000
 Kd 0.369412 0.369412 0.369412
-Ks 0.200000 0.200000 0.200000
+Ks 0.500000 0.500000 0.500000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
-illum 2
+illum 3
