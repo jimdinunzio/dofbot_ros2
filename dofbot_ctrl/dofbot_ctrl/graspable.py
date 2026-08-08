@@ -47,6 +47,13 @@ class GraspableObject:
                 defaults to mid-height
     symmetric   True if wrist roll does not matter (an upright cylinder), so
                 theta5 is free and the approach azimuth alone fixes the grasp
+    mesh        optional package:// URI of a Z-UP mesh to DRAW the object as.
+                Purely cosmetic -- collision still uses `shape` -- and it is
+                scaled to the fields above rather than trusted at its modelled
+                size, so a mesh cannot silently disagree with the geometry that
+                is planned against. Its origin may be anywhere. See
+                scene_markers, which rejects a mesh whose proportions say it
+                was exported up the wrong axis.
     """
 
     name: str
@@ -57,6 +64,7 @@ class GraspableObject:
     grasp_width: float = None
     grasp_height: float = None
     symmetric: bool = False
+    mesh: str = field(default=None, compare=False)
     note: str = field(default='', compare=False)
 
     def __post_init__(self):
@@ -141,7 +149,13 @@ SODA_CAN = register(GraspableObject(
     width=0.066,
     height=0.122,
     grasp_height=0.045,     # on the straight body, below the centre of mass
-    symmetric=True))
+    symmetric=True,
+    # Drawn from cokecan.obj, which is modelled 64.3 x 122.7 mm -- close to the
+    # 66 x 122 above but not equal to it, which is exactly why scene_markers
+    # rescales rather than trusting the file. The 1.8 mm is on the DIAMETER,
+    # the dimension the jaws close on, so letting the drawing win would put the
+    # picture and the grasp 0.9 mm apart.
+    mesh='package://dofbot_description/meshes/cokecan.obj'))
 
 # NEEDS THE STOCK JAWS: it passes straight between the extended fingers, which
 # stop too far apart to touch it. That trade runs the other way from the can, so

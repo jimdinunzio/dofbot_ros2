@@ -32,6 +32,26 @@ Visualization Manager:
       Scene Robot:
         Robot Alpha: 0.5
       Value: true
+    # The target drawn as its real textured mesh, published by
+    # dofbot_ctrl.scene_markers. Cosmetic: MotionPlanning above already draws
+    # what is actually planned against, which is a plain cylinder.
+    #
+    # Durability MUST be Transient Local to match the publisher. Left at the
+    # default Volatile the display is still compatible -- so no warning appears
+    # -- but an RViz started after the pick began shows nothing until the can
+    # next moves, which looks like the mesh failing to load.
+    - Class: rviz_default_plugins/Marker
+      Name: Graspable Objects
+      Enabled: true
+      Namespaces:
+        graspable: true
+      Topic:
+        Depth: 10
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /graspable_objects
+      Value: true
   Global Options:
     Fixed Frame: base_link
   Tools:

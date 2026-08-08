@@ -7,6 +7,9 @@ Pick and place, driven by coordinates rather than by RViz.
     # the catalogue height. The extensions want it further out than the stock
     # jaws did -- see the reach note below.
     ros2 run dofbot_ctrl pick_place -- 0.30 0.0 0.061
+    # solve and collision-check the whole sequence without moving. Leaves the
+    # can standing in the planning scene and drawn in RViz, so this is also how
+    # you park a target to look at it.
     ros2 run dofbot_ctrl pick_place -- --plan-only 0.30 0.0 0.061
     # the test block needs the stock jaws; the extensions cannot close on it
     DOFBOT_GRIPPER=stock ros2 run dofbot_ctrl pick_place -- \
@@ -23,8 +26,8 @@ partly encode that correction and partly encode calibration error.
 
 SEQUENCE
 --------
+    add the object to the planning scene, and draw its mesh
     move_named('ready') + open_gripper
-    add the object to the planning scene
     move_pose  to a pre-grasp standoff back along the tool axis  (OMPL plans it)
     cartesian_move straight in to the grasp                      (we plan it)
     close_gripper to the object's grasp width
@@ -107,7 +110,7 @@ from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 
 from dofbot_ctrl import dofbot_kinematics as kin
-from dofbot_ctrl import graspable, gripper, scene_objects
+from dofbot_ctrl import graspable, gripper, scene_markers, scene_objects
 from dofbot_ctrl.moveit_client import (GRIPPER_LINKS, NAMED_STATES,
                                        DofbotMoveIt, MoveItError)
 
@@ -137,6 +140,10 @@ class PickPlace(Node):
         self.declare_parameter('min_lift', 0.03)      # enough to clear the floor
 
         self.mc = DofbotMoveIt(self)
+        # Cosmetic only. Every call below sits next to the scene_objects call it
+        # mirrors, so the drawn can and the planned-against cylinder are put in
+        # the same place by the same lines.
+        self.markers = scene_markers.MeshMarkers(self)
         self.held = None            # the object currently attached, if any
 
     # ------------------------------------------------------------------ setup
@@ -292,13 +299,39 @@ class PickPlace(Node):
             % (obj.name, x, y, z, grasp[0], grasp[1], grasp[2], phi,
                standoff * 1e3, gripper.describe(obj.grasp_width)))
 
-        if plan_only:
-            return self._report_plan(obj, pre, grasp, phi, lift, hover)
+        # Into the scene AFTER the approach search but BEFORE the plan_only
+        # branch, and both halves of that matter.
+        #
+        # Not earlier: _feasible_approach would then reject every pitch, because
+        # a grasp puts the jaws around the object and that is a collision until
+        # it is allowed.
+        #
+        # Not later: --plan-only used to return above this line, so it drew no
+        # can and checked its poses against a world that did not contain one.
+        # That made the mode useless for the thing it is most wanted for --
+        # parking the target and looking at where it actually sits relative to
+        # the jaws -- and it also under-reported, since a link that fouls the
+        # can is exactly the sort of thing a dry run should catch.
+        scene_objects.add(self.mc, obj, x, y, z)
+        self.markers.show(obj, x, y, z)
 
+        if plan_only:
+            # The same allowance the real sequence uses, so the dry run answers
+            # the same question rather than flagging the grasp itself.
+            self.mc.allow_collisions(obj.name, GRIPPER_LINKS, True)
+            try:
+                return self._report_plan(obj, pre, grasp, phi, lift, hover)
+            finally:
+                # The can stays in the scene to be looked at, but the ACM goes
+                # back: nothing is holding it, so it should obstruct the gripper
+                # like any other object until a real pick allows it.
+                self.mc.allow_collisions(obj.name, GRIPPER_LINKS, False)
+
+        # The can is already in the scene for these two, and deliberately still
+        # forbidden -- the transit to 'ready' has no business passing through it.
         self.mc.move_named('ready')
         self.mc.open_gripper()
 
-        scene_objects.add(self.mc, obj, x, y, z)
         # With the object in the scene, the last few centimetres of the approach
         # are "in collision" by definition -- the jaws have to be around it.
         # Allow just that pair so the floor and the chassis stay checked.
@@ -313,6 +346,7 @@ class PickPlace(Node):
         # does not matter, and for anything else it is the caller's to set.
         roll = self.mc.current_joints()[4]
         scene_objects.attach(self.mc, obj, phi, roll, hover)
+        self.markers.hold(obj, phi, roll, hover)
         self.held = obj
         # The attached object's touch_links now cover finger contact, so the
         # manual allowance can go; leaving it would also let the object pass
@@ -362,6 +396,7 @@ class PickPlace(Node):
         if self.held is not None:
             self.mc.detach(self.held.name)
             self.mc.remove(self.held.name)
+            self.markers.hide(self.held)
             self.held = None
         self.mc.move_named('carry')
         self.get_logger().info('placed')
@@ -401,7 +436,8 @@ def main(args=None):
     parser.add_argument('--object', default=None,
                         help='catalogue entry (default: the `object` parameter)')
     parser.add_argument('--plan-only', action='store_true',
-                        help='solve and collision-check the sequence, move nothing')
+                        help='solve and collision-check the sequence, move '
+                             'nothing; leaves the object in the scene and drawn')
     parser.add_argument('--check-states', action='store_true',
                         help='validate every named state and exit')
     parser.add_argument('--no-place', action='store_true',

@@ -1,0 +1,22 @@
+# Blender 5.2.0 LTS MTL File: 'cokecan.blend'
+# www.blender.org
+
+newmtl Insert_Label_Here
+Ns 656.099976
+Ka 0.480000 0.480000 0.480000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd cocacolacanimage.jpg
+
+newmtl Metal_part
+Ns 640.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.369412 0.369412 0.369412
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
