@@ -55,9 +55,13 @@ FOLLOWING THE GRIPPER
 ---------------------
 Once the object is attached, the marker is republished in arm5_Link at
 scene_objects.held_pose() -- the same pose the attached collision object is
-given. The header stamp is left at zero, which tells RViz to transform with the
-LATEST tf rather than tf at a fixed time, so the mesh then tracks the arm for
-free without this module publishing again.
+given -- with frame_locked set, so RViz re-transforms it from live tf every
+frame and the mesh tracks the arm without this module publishing again.
+
+frame_locked is load-bearing. RViz transforms an ordinary marker once, on
+arrival, and caches the result; the can would therefore re-anchor to arm5_Link
+at the moment of the grasp, when the gripper is down at the can, and then stay
+on the ground while the arm carried the collision cylinder off without it.
 
 LATE SUBSCRIBERS
 ----------------
@@ -262,10 +266,19 @@ class MeshMarkers:
         marker.id = self._id(obj.name)
         marker.type = Marker.MESH_RESOURCE
         marker.action = action
-        # header.stamp is left at its default zero ON PURPOSE: that tells RViz
-        # to transform with the LATEST tf rather than tf at the publish time, so
-        # a marker anchored to arm5_Link follows the arm without this module
-        # publishing again. Stamping it with now() freezes the can in mid-air.
+        # frame_locked is what makes an attached object FOLLOW THE GRIPPER, and
+        # it is not optional. Without it RViz transforms a marker into the fixed
+        # frame ONCE, when the message arrives, and caches the result. The can
+        # would re-anchor to arm5_Link at the instant of the grasp -- which is
+        # the instant the gripper is down at the can -- and then sit there on
+        # the ground while the arm lifted the collision cylinder away without
+        # it. Set, RViz re-transforms every frame from live tf.
+        #
+        # header.stamp is left at its default zero alongside it, so the one
+        # transform a non-frame-locked marker would get uses the latest tf
+        # rather than tf at publish time. That is necessary but, as above, not
+        # sufficient.
+        marker.frame_locked = True
         marker.lifetime = Duration().to_msg()       # zero: until deleted
         return marker
 

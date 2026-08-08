@@ -25,25 +25,40 @@ Visualization Manager:
         Show Trail: false
         State Display Time: 0.05 s
         Trajectory Topic: display_planned_path
+      Planning Request:
+        # Both ghost robots off. They are the ends of a drag-the-marker query,
+        # and nothing here drags a marker -- pick_place sets its goals from
+        # code. The goal ghost defaults to ON, in orange (250, 128, 0), parked
+        # straight up, and once anything is attached it draws a SECOND copy of
+        # the held object hanging off it. Same reasoning as Loop Animation and
+        # Show Trail above: ghost arms are noise when you are driving from code.
+        Query Goal State: false
+        Query Start State: false
       Planning Scene Topic: monitored_planning_scene
       Robot Description: robot_description
       Scene Geometry:
-        # Was 1. The only world collision objects this robot ever has are
-        # graspable targets, and scene_markers now draws each of those as its
-        # real mesh at exactly the same place. Two coincident opaque surfaces
-        # z-fight, and MoveIt wins: you get its default green (50, 230, 50)
-        # cylinder with shards of the can flickering through it.
+        # Was 1, briefly 0.25, now off entirely. The only world collision
+        # objects this robot ever has are graspable targets, and scene_markers
+        # draws each of those as its real mesh at exactly the same place and
+        # size -- scaled from the same catalogue numbers the cylinder is built
+        # from, so the two cannot disagree. Two coincident surfaces z-fight,
+        # and MoveIt wins: a green (50, 230, 50) cylinder with shards of the
+        # can flickering through it. Fading it to 0.25 only made a green haze.
         #
-        # Dropping the alpha puts the primitive in the transparent pass, so the
-        # mesh renders solid and the cylinder ghosts over it -- which is what
-        # you want to see anyway, since the cylinder is the thing actually
-        # planned against. Set it to 0 to hide the primitive entirely.
+        # The primitive is redundant, so it is hidden rather than blended.
+        #
+        # COST: an object with no `mesh` in the catalogue now draws NOTHING.
+        # test_block is one. Raise this to see those again.
         #
         # The chassis and floor are NOT affected: chassis.xacro makes them real
         # URDF links, so they draw as part of the robot, not as scene geometry.
-        Scene Alpha: 0.25
+        Scene Alpha: 0
       Scene Robot:
-        Robot Alpha: 0.5
+        # Was 0.5. That half-alpha is for seeing a ghost of MoveIt's idea of
+        # the robot THROUGH a separately-drawn solid one; this config has no
+        # separate robot display, so it was making the only arm on screen --
+        # and the chassis with it -- translucent for no benefit.
+        Robot Alpha: 1
       Value: true
     # The target drawn as its real textured mesh, published by
     # dofbot_ctrl.scene_markers. Cosmetic: MotionPlanning above already draws
