@@ -23,6 +23,12 @@ Visualization Manager:
         # waypoint at once, giving a stack of ghost arms. Both stay off.
         Loop Animation: false
         Show Trail: false
+        # Off too, per Jim, and for the same reason as the two above: this is
+        # the ghost arm that replays each planned trajectory, and with
+        # pick_place driving a sequence of segments it is a translucent second
+        # robot moving out of step with the real one. Nothing here is being
+        # previewed before execution, so there is nothing for it to show.
+        Show Robot Visual: false
         State Display Time: 0.05 s
         Trajectory Topic: display_planned_path
       Planning Request:
