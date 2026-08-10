@@ -153,11 +153,11 @@ NAMED_STATES = {
     # chassis camera has a clear view of the floor in front
     'ready':      (0.0,    -0.7932,  1.2775,  0.5157, 0.0),
     # arm high and tucked, TCP (0.100, 0, 0.282) phi=1.4 -- safe to drive with
-    'carry':      (0.0,    -0.7112,  0.8416,  1.2695, 0.0),
+    'carry':      (0.0,    -0.718,  0.840,  0.959, 0.0),
     # release pose, TCP (0.150, 0.150, 0.282) phi=1.4, front-left and high.
     # This one is SITE-SPECIFIC: it assumes a bin whose rim is below ~0.3 m and
     # is within reach off the left front. Re-measure it for the actual bin.
-    'over_trash': (0.7821,  0.6963, -0.5057,  1.2094, 0.0),
+    'over_trash': (0.82,  0.229, -0.025,  0.942, 0.0),
 }
 
 
