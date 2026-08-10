@@ -280,6 +280,102 @@ def test_the_can_is_held_where_the_robot_actually_held_it():
         assert g.grip_angle_for(0.066) == pytest.approx(1.411, abs=0.003)
         # The squeeze is real travel past contact, not a rounding artefact.
         assert g.grip_angle_for(0.066) > g.jaw_angle_for(0.066) + 0.04
+def _advance(g, width):
+    """How much deeper than the fingertip the throat lookup drives the TCP."""
+    return g.tip_offset_for(width) - g.throat_offset_for(width)
+
+
+def _clamp_width(g):
+    """The width at which the advance reaches zero: half the object exactly
+    fills the finger, leaving the clearance. Wider than this and there is
+    nothing to advance."""
+    return 2.0 * (g.FINGER_DEPTH - g.BACK_STOP_CLEARANCE)
+
+
+def _unclamped_widths(g):
+    """Two grippable widths strictly below the clamp threshold, derived so the
+    formula tests keep probing the live branch whatever the constants become.
+
+    Skips rather than lies if the fitted profile has no such width -- with the
+    clearance set high enough, every object it can hold is already clamped, and
+    a test that quietly asserted nothing would be worse than one that says so.
+    """
+    top = min(_clamp_width(g), g.SAFE_MAX_WIDTH)
+    lo, hi = g.SAFE_MIN_WIDTH, top - 1e-4
+    if hi <= lo:
+        pytest.skip('no unclamped width on the %s profile at a %.0f mm '
+                    'clearance' % (g.PROFILE, g.BACK_STOP_CLEARANCE * 1e3))
+    return (lo, (lo + hi) / 2.0)
+
+
+def test_the_object_is_seated_against_the_back_stop():
+    """The advance is FINGER_DEPTH - width/2 - BACK_STOP_CLEARANCE: the face,
+    less the half of the object that hangs behind the contact line, less the
+    clearance. Not FINGER_DEPTH (that ignores the object's own radius, and put
+    the arm 35 mm too deep on hardware) and not a fixed observed gap.
+
+    Every expected value is computed from FINGER_DEPTH and BACK_STOP_CLEARANCE,
+    and the widths it probes are derived from the clamp threshold rather than
+    typed in, so retuning either constant leaves this test still testing the
+    formula instead of failing on a stale literal.
+    """
+    with as_profile('extended') as g:
+        for w in _unclamped_widths(g):
+            room = g.FINGER_DEPTH - w / 2.0 - g.BACK_STOP_CLEARANCE
+            assert _advance(g, w) == pytest.approx(room)
+            # The object reaches its own radius PLUS the advance into the
+            # finger, and that is what has to fit -- clearance left over.
+            assert w / 2.0 + _advance(g, w) == pytest.approx(
+                g.FINGER_DEPTH - g.BACK_STOP_CLEARANCE)
+
+
+def test_the_can_clamps_to_the_fingertip_at_the_current_clearance():
+    """The can is wider than the clearance leaves room for, so it gets no
+    advance at all and is held exactly where it was before throat_offset_for
+    existed.
+
+    Recorded rather than tidied away, because it is surprising: the depth
+    machinery is live and correct and yet does nothing for the object it was
+    written for. That is a property of the hand-set BACK_STOP_CLEARANCE, not of
+    the model -- lower it and the can moves in. Stated as the inequality that
+    causes it, so this test explains itself at whatever the constants become.
+    """
+    can = get('soda_can')
+    with as_profile('extended') as g:
+        assert g.FINGER_DEPTH - can.grasp_width / 2.0 <= g.BACK_STOP_CLEARANCE
+        assert _advance(g, can.grasp_width) == 0.0
+        assert g.throat_offset_for(can.grasp_width) == g.tip_offset_for(
+            can.grasp_width)
+
+
+def test_the_advance_tracks_the_object_width():
+    """The property both earlier attempts lacked. A narrow object leaves more
+    room behind its contact line, so it can be driven further in; a fixed nudge
+    under-uses that and drives a wide object into the stop."""
+    with as_profile('extended') as g:
+        assert _advance(g, g.SAFE_MIN_WIDTH) > _advance(g, g.SAFE_MAX_WIDTH)
+
+
+def test_a_wide_object_is_never_pulled_back_out():
+    """At or past the clamp threshold the object is already against the stop
+    with its contact at the fingertip. The answer is the fingertip -- an
+    unclamped subtraction would go NEGATIVE and hover further out than
+    tip_offset_for."""
+    with as_profile('extended') as g:
+        flush = _clamp_width(g)
+        for w in (flush, (flush + g.SAFE_MAX_WIDTH) / 2.0, g.SAFE_MAX_WIDTH):
+            assert g.throat_offset_for(w) == g.tip_offset_for(w)
+        assert _advance(g, flush) == pytest.approx(0.0)
+
+
+def test_an_unmeasured_finger_falls_back_to_the_tip():
+    """Nobody has measured the stock finger, and a guess there drives the arm
+    into the object. Absent the measurement the answer is the old, safe one."""
+    with as_profile('stock') as g:
+        assert g.FINGER_DEPTH is None
+        mid = (g.SAFE_MIN_WIDTH + g.SAFE_MAX_WIDTH) / 2.0
+        for w in (g.SAFE_MIN_WIDTH, mid, g.SAFE_MAX_WIDTH):
+            assert g.throat_offset_for(w) == g.tip_offset_for(w)
 
 
 def test_squeeze_never_drives_past_the_stop(profile):

@@ -55,15 +55,31 @@ which one it used, so tuning on hardware is a matter of reading the log.
 
 HOVER: THE TCP IS NOT WHERE THE JAWS GRIP
 ----------------------------------------
-The object is held BETWEEN THE FINGERTIPS, and the fingertips are nowhere near
-Gripping_point_Link. That frame is fixed to the wrist, while the fingers reach
-PAST it and by a varying amount, because the four-bar swings them outward along
-the tool axis as it closes.
+The object is held BETWEEN THE FINGERS, and the fingers are nowhere near
+Gripping_point_Link. That frame is fixed to the wrist, while they reach PAST it
+and by a varying amount, because the four-bar swings them outward along the tool
+axis as it closes.
 
 So the TCP target is the grasp point pulled back along the tool axis by
-gripper.tip_offset_for(width). Get this wrong in the optimistic direction and
-the arm drives itself into the object up to the knuckles rather than pinching it
-at the tips -- which is exactly what it looks like in RViz.
+gripper.throat_offset_for(width). Get this wrong in the optimistic direction and
+the arm drives itself into the object up to the knuckles -- which is exactly
+what it looks like in RViz.
+
+HOW FAR DOWN THE FINGER, not just how far back. The finger has 40 mm of flat
+front face and then a back stop, and where on that face the object lands is a
+separate question from how far the TCP is held off. gripper.throat_offset_for()
+answers it, and HALF THE OBJECT IS BEHIND THE CONTACT LINE is the term to keep
+hold of: the faces touch a round object at its widest point, so a can aimed at
+the fingertip already fills 33 of the 40 mm and only 7 mm is going spare. Forget
+that and "use the whole face" reads as a 40 mm advance, which drove the arm
+35 mm too deep. The derivation lives there; do not re-do it here.
+
+WHAT THIS DID NOT FIX. All of the above was written chasing a can that would not
+stay in the jaws, and the actual fault was the grip HEIGHT -- 45 mm up a 122 mm
+can, since raised to 80 mm, which is what made the pick work. The depth model
+stands on its own geometry and earns its place for narrower objects, but it was
+not the bug, and at the current gripper.BACK_STOP_CLEARANCE it does nothing for
+the can at all. Rule out grasp_height before concluding anything about the jaws.
 
 Which gripper is fitted is set by DOFBOT_GRIPPER, and dofbot.urdf reads the same
 variable. Nothing in this file needs to know which one it is, but if those two
@@ -81,8 +97,16 @@ So the reachable band for the can translates rather than narrowing. Swept
 offline against ik_best, it keeps its width and moves outward by roughly the
 increase in hover:
 
-    stock jaws        object x = 0.17 .. 0.28 m
-    extended fingers  object x = 0.25 .. 0.36 m
+    stock jaws                       object x = 0.20 .. 0.28 m   hover 11.7 mm
+    extended fingers                 object x = 0.26 .. 0.35 m   hover 88.2 mm
+
+Seating an object deeper SPENDS hover, so it walks the band back in by whatever
+it spends -- the same mechanism as the gripper swap, just driven by where on the
+finger the object sits rather than by how long the finger is. The can spends
+NOTHING at the current gripper.BACK_STOP_CLEARANCE (its advance clamps to zero,
+see gripper.throat_offset_for), so the second row is both the fingertip figure
+and the live one. Lower that clearance and the band moves in with it: at a 2 mm
+clearance the can advances 5 mm and the band was swept at 0.257 .. 0.345.
 
 The near edge is the one that bites: a can comfortably reachable on the stock
 jaws can be unreachable at ANY pitch with the extensions on. When a grasp will
@@ -174,20 +198,28 @@ class PickPlace(Node):
     def _hover(self, obj):
         """How far back along the tool axis the TCP sits from the grasp point.
 
-        The object is held BETWEEN THE FINGERTIPS, and the fingertips are not at
-        Gripping_point_Link. That frame is fixed to the wrist while the fingers
-        reach past it, by more as they close, because the four-bar swings them
-        outward along the tool axis. So the arm must stop the TCP short of the
-        object by exactly that much, which is gripper.tip_offset_for() at the
-        opening the object holds the jaws to.
+        The object is held BETWEEN THE FINGERS, and the fingers are not at
+        Gripping_point_Link. That frame is fixed to the wrist while they reach
+        past it, by more as they close, because the four-bar swings them outward
+        along the tool axis. So the arm must stop the TCP short of the object by
+        exactly that much.
+
+        WHERE ON THE FINGER is the other half, and it is not free. This used to
+        be gripper.tip_offset_for(), which lands the CONTACT LINE on the
+        fingertip; since the faces grip a round object at its widest point, half
+        the object then hangs behind the tip and the rest of the finger goes
+        unused. gripper.throat_offset_for() seats it against the back stop
+        instead, working the advance out from the object's own radius. It is not
+        what made the can pick work -- that was grasp_height -- and for the can
+        it currently returns tip_offset_for unchanged.
 
         This is a lookup, not a search. Do not replace it with a search for
         the smallest collision-free backoff: that finds the DEEPEST reach which
-        does not trip a contact, burying the arm in the object up to the
-        knuckles instead of pinching it at the tips. "Not colliding" is not the
-        same as "gripping".
+        does not trip a contact, which is a different quantity that merely looks
+        similar -- it moves whenever the scene does, and "not colliding" is not
+        the same as "gripping".
         """
-        return gripper.tip_offset_for(obj.grasp_width)
+        return gripper.throat_offset_for(obj.grasp_width)
 
     def _feasible_approach(self, obj, x, y, z):
         """Choose a grasp pitch and hover that support the whole sequence.
@@ -256,10 +288,20 @@ class PickPlace(Node):
                 self.get_logger().warn(
                     'lift limited to %.0f mm by reach (wanted %.0f)'
                     % (lift * 1e3, want_lift * 1e3))
+            # Half the object is behind the contact line, so how far it reaches
+            # into the finger is that half PLUS whatever the advance was. Worth
+            # printing both: the advance is what changed, the reach is what has
+            # to fit inside gripper.FINGER_DEPTH.
+            advance = gripper.tip_offset_for(obj.grasp_width) - hover
             self.get_logger().info(
-                'TCP held %.1f mm back from the grasp point, so the FINGERTIPS '
-                'land on it (gripper.tip_offset_for(%.3f))'
-                % (hover * 1e3, obj.grasp_width))
+                'TCP held %.1f mm back from the grasp point: the fingertip '
+                'lookup driven %.1f mm deeper, so %s reaches %.1f mm into a '
+                '%s mm finger (gripper.throat_offset_for(%.3f))'
+                % (hover * 1e3, advance * 1e3, obj.name,
+                   (obj.grasp_width / 2.0 + advance) * 1e3,
+                   '%.0f' % (gripper.FINGER_DEPTH * 1e3)
+                   if gripper.FINGER_DEPTH is not None else 'an unmeasured',
+                   obj.grasp_width))
             return phi, pre, grasp, lift, hover
 
         # Say whether this is a reach problem or a posture problem, because the

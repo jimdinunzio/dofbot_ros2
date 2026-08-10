@@ -46,9 +46,10 @@ WHY THE COUPLING IS KEPT THIS NARROW
 Nothing above this module depends on jaw geometry: IK, Cartesian segments, the
 planning scene, attach and detach, transit and carry poses all sit above it.
 Every jaw dimension in the codebase lives in this file, behind MAX_WIDTH,
-MIN_WIDTH, jaw_angle_for(), jaw_width_for() and tip_offset_for(), so a swap is a
-re-parameterisation rather than a rewrite. Fitting the extended fingers was
-exactly that: a second table here, and the meshes.
+MIN_WIDTH, jaw_angle_for(), jaw_width_for(), tip_offset_for() and
+throat_offset_for(), so a swap is a re-parameterisation rather than a rewrite.
+Fitting the extended fingers was exactly that: a second table here, and the
+meshes.
 
 A gripper swap touches exactly: the finger meshes/links and the
 Gripping_point_Link offset in dofbot_description/urdf/dofbot.urdf; the mimic
@@ -157,6 +158,34 @@ _PROFILES = {'stock': _STOCK, 'extended': _EXTENDED}
 DEFAULT_PROFILE = 'extended'
 ENV_VAR = 'DOFBOT_GRIPPER'
 
+# USABLE FINGER: the flat front face, from the fingertip back to the BACK STOP --
+# the cross bars behind the flat, which is what an object hits if it is driven
+# all the way in. MEASURED ON THE PART, in metres.
+#
+# This is half of how far DOWN THE FINGER an object sits, as against how WIDE the
+# jaws open. THE OTHER HALF IS THE OBJECT'S OWN RADIUS, and leaving it out is
+# what made two earlier attempts wrong -- see throat_offset_for, which is where
+# the two are combined.
+#
+# HONEST PROVENANCE: this was written to explain a can that would not stay in
+# the jaws, and that turned out to be a grasp_height fault instead (see
+# graspable.SODA_CAN). The geometry here is still right and still worth having
+# for narrower objects, but it did not fix anything, and nothing below should be
+# read as though it did.
+#
+# None means nobody has measured this profile, and the answer is then the old
+# fingertip behaviour rather than a guess: too shallow is a weak grip, too deep
+# drives the arm into the object, and only one of those breaks hardware. Unbolt
+# the extensions and measure tip to back stop to fill the stock jaws in.
+_FINGER_DEPTH = {'stock': None, 'extended': 0.040}
+
+# How much of the finger to leave unused at the back, so the cross bars come
+# close to the object without touching it. The slack finger's backlash pushes the
+# object off the centreline (see the BACKLASH note on _EXTENDED) and the approach
+# carries its own pose error, so the last couple of millimetres are not worth
+# having. This is the knob: raise it if the bars touch.
+BACK_STOP_CLEARANCE = 0.01
+
 
 class GripperError(ValueError):
     """An opening this gripper cannot produce."""
@@ -172,6 +201,7 @@ if PROFILE not in _PROFILES:
            (_EXTENDED[0][0][2] - _STOCK[0][0][2]) * 1e3))
 
 _TABLE, CALIBRATED = _PROFILES[PROFILE]
+FINGER_DEPTH = _FINGER_DEPTH[PROFILE]
 
 OPEN_ANGLE = _TABLE[0][0]
 CLOSE_ANGLE = _TABLE[-1][0]
@@ -307,8 +337,69 @@ def tip_offset_for(width):
     Do not replace this with a search for the smallest backoff that is merely
     collision-free. That finds the deepest reach that does not trip a contact,
     which is not the same thing as gripping at the tips. It is a lookup.
+
+    Read this as the fingertip lookup: it is measured to the outermost vertex,
+    though an object aimed at it in fact settles some way down the flat face.
+    throat_offset_for() is what the pick sequence uses; this stays the measured
+    column that it derives from.
     """
     return _interp(width, _R_WIDTHS, _R_OFFSETS)
+
+
+def throat_offset_for(width):
+    """Like tip_offset_for, but seating the object against the BACK of the
+    finger instead of pinching it at the tip.
+
+    HALF THE OBJECT IS BEHIND THE CONTACT LINE. That is the whole derivation and
+    the term two earlier attempts left out. The jaw faces touch a round object at
+    its WIDEST point, so with the contact aimed at the fingertip -- which is what
+    tip_offset_for does -- a 66 mm can already occupies 33 mm of the 40 mm face
+    and leaves 7 mm before the back stop. The advance available is therefore
+
+        FINGER_DEPTH - width/2 - BACK_STOP_CLEARANCE
+
+    AT THE CONSTANTS AS THEY STAND that is negative for the can -- 40 - 33 - 10
+    -- so the can clamps and is held at the fingertip exactly as it was before
+    any of this existed. That is a statement about BACK_STOP_CLEARANCE, which is
+    hand-set, and not about the model: lower it and the can moves in. Narrower
+    objects still get their advance, which is the point of deriving it per
+    object rather than nudging everything by a constant.
+
+    The advance is emphatically not 40 and not a fixed 10. Both were tried on
+    hardware:
+
+      - FINGER_DEPTH alone ("use the whole face") ignores the 33 mm of face the
+        can itself fills, and drove the arm 35 mm too deep.
+      - A fixed observed gap is right for exactly one object. It is width-blind,
+        so it under-uses a narrow object's room and drives a wide one into the
+        stop.
+
+    Still a lookup, and the warning on tip_offset_for applies with more force
+    now, not less: do NOT turn this into a search for the deepest reach that is
+    merely collision-free. That would stop where the geometry happens to touch
+    rather than where the finger has run out, and it would change silently every
+    time the scene did.
+
+    NEVER RETREATS. An object wider than 2*(FINGER_DEPTH - BACK_STOP_CLEARANCE)
+    is already against the stop when its contact is at the fingertip, and the
+    right answer there is the fingertip -- not a hover pushed further out than
+    tip_offset_for, which is what an unclamped subtraction would return.
+
+    width/2 ASSUMES THE OBJECT IS ROUND OR SQUARE IN THE GRIP PLANE, true of
+    everything in the catalogue: the can is a cylinder and the test block a
+    30 mm cube. A long or flat box is gripped across one dimension and reaches
+    into the throat by another, so it would have to supply its own half-extent.
+    That arrives as a second argument when something needs it -- this module
+    cannot import graspable, since graspable imports it.
+
+    Falls back to the fingertip where FINGER_DEPTH is unmeasured, because the
+    error directions are not symmetric: hovering too far back means a weak grip,
+    driving too deep means the arm pushes the object over or stalls into it.
+    """
+    if FINGER_DEPTH is None:
+        return tip_offset_for(width)
+    deeper = max(0.0, FINGER_DEPTH - width / 2.0 - BACK_STOP_CLEARANCE)
+    return tip_offset_for(width) - deeper
 
 
 def grip_angle_for(width, squeeze=DEFAULT_SQUEEZE):
