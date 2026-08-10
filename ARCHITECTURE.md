@@ -1,0 +1,338 @@
+# DOFBOT manipulation stack — how it fits together
+
+Orientation for anyone (human or agent) picking this up. It says what each piece
+does, where the load-bearing decisions live, and which numbers are measured
+versus derived. It is not API documentation — the modules carry that in their
+docstrings, and those docstrings are the primary source. This is the map.
+
+Last verified against the tree on 2026-08-05: 87 tests pass, 3 skipped.
+
+---
+
+## The one-paragraph version
+
+`pick(x, y, z)` takes an object's centre in `base_link` and executes
+approach → grasp → attach → lift → carry → place, with no RViz in the loop. It
+works because the arm's kinematics are solved in closed form in pure Python
+rather than handed to MoveIt as a pose goal, which lets the whole sequence be
+parameterised as *position + tool pitch* — five numbers for five joints. MoveIt
+still does collision-aware planning for the long transits, and still owns the
+planning scene. Perception will eventually plug in by calling `pick()`.
+
+---
+
+## Packages
+
+| package | what it is |
+|---|---|
+| `dofbot_description` | URDF, meshes, collision geometry. The physical model. |
+| `dofbot_moveit` | Generated MoveIt config: SRDF, controllers, kinematics, RViz. |
+| `dofbot_ctrl` | Everything we wrote. Kinematics, gripper model, pick sequence, hardware bridges. |
+| `dofbot_arm_lib` | Vendor serial driver (`Arm_Lib`), repackaged. |
+| `dofbot_interface` | Message/service definitions. |
+
+---
+
+## dofbot_ctrl module map
+
+Read in this order; each depends only on the ones above it.
+
+```
+joint_map.py         servo degrees <-> URDF radians. Zero offsets, signs, gripper range.
+dofbot_kinematics.py closed-form FK/IK. Pure math, no ROS. The foundation.
+gripper.py           jaw model: opening <-> angle, and where the fingers actually grip.
+graspable.py         object catalogue. Dimensions, grasp width, grip height.
+scene_objects.py     catalogue object -> planning-scene geometry + held pose.
+scene_markers.py     catalogue object -> RViz mesh marker. Visual only.
+moveit_client.py     DofbotMoveIt: all ROS interaction with move_group + controllers.
+pick_place.py        the sequence. Entry point `pick_place`.
+```
+
+Hardware-facing, separate from the above:
+
+```
+joint_state_mirror.py  reads servos -> /joint_states     (read-only, for RViz)
+moveit_bridge.py       /joint_states -> servos           (write-only, drives the arm)
+gui_teleop.py          manual jogging
+calibrate_zero.py      per-servo zero offsets by encoder read
+chassis_collision.py   SUPERSEDED — chassis/floor are real URDF links now
+```
+
+---
+
+## The three ideas that explain most of the code
+
+### 1. phi — tool tilt from vertical
+
+`phi = theta2 + theta3 + theta4`, the sum of the three pitch joints, because they
+share an axis. `phi = 0` points the tool straight up, `pi/2` horizontal,
+`pi` straight down.
+
+This is the arm's real parameterisation. A 5-DOF arm cannot hit an arbitrary
+orientation, but it can hit any *tilt*, so `(x, y, z, phi, roll)` is exactly five
+numbers for five joints and admits a closed-form solution.
+
+**MoveIt's KDL solver is not broken** — measured, 116/120 exactly-reachable pose
+goals solved at the 5 ms timeout it shipped with, and `computeCartesianPath`
+returns `fraction = 1.000` on the segments used here. The reason we don't use
+pose goals is that you must already know an achievable quaternion to ask for one,
+and working that out *is* this arm's kinematics.
+
+### 2. Hover — the TCP is not where the jaws grip
+
+`Gripping_point_Link` is a fixed frame 68.09 mm from the wrist. The fingertips
+are nowhere near it, and the four-bar swings them further out along the tool axis
+as the jaws close. So the TCP target is the grasp point pulled **back** along the
+tool axis.
+
+Two offsets, and the distinction matters:
+
+- `tip_offset_for(width)` — contact at the fingertip.
+- `throat_offset_for(width)` — object seated against the back of the finger.
+  This is what the pick sequence uses.
+
+The throat derivation is `FINGER_DEPTH - width/2 - BACK_STOP_CLEARANCE`. **Half
+the object is behind the contact line** — the jaws touch a round object at its
+widest point, so a 66 mm can already fills 33 mm of the 40 mm face. Two earlier
+attempts left that term out; one drove the arm 35 mm too deep.
+
+Both are **lookups, never searches**. An earlier version searched for the
+smallest collision-free backoff, which finds the deepest reach that doesn't trip
+a contact — "not colliding" is not "gripping".
+
+Corollary: never collision-check the *commanded* squeeze angle. The object stops
+the jaws at its own width, so `grip_angle_for()` is a pose the gripper never
+occupies while holding something. Check `jaw_angle_for(width)`.
+
+### 3. The pitch sweep
+
+The feasible band of phi for a given target is narrow — sometimes 0.02 rad — and
+it moves with reach. So `_feasible_approach` sweeps phi from `pi/2` to `pi` in
+0.01 rad steps, ordered nearest-first to the configured `grasp_pitch`, screening
+each candidate with analytic IK (free, microseconds) before spending a
+`/check_state_validity` call on the survivors.
+
+The step size is not over-caution: a 0.05 step straddled a real 0.02-wide band
+and reported "no workable approach" for a pose the arm reaches comfortably.
+
+Same shape appears twice more — `_reachable_lift` measures how far straight up
+the tool can actually go, and `ik_best` tries both elbow branches and keeps the
+one nearest the seed.
+
+---
+
+## The two grippers
+
+**The arm has two gripper configurations and they physically swap.** Bolt-on
+finger extensions screw onto the stock fingers and come off with a screwdriver.
+
+| profile | range | takes |
+|---|---|---|
+| `stock` | 0–60 mm, closes fully | the 30 mm test block, not the can |
+| `extended` | 50–105 mm, never shuts | the 355 ml can, not the test block |
+
+They are near-complements. Reaching the 66 mm can costs the bottom of the range,
+so the 30 mm block falls straight between the extended fingers. This is why
+`graspable.fits()` is a live function and not a stored verdict.
+
+**One switch drives both sides:** environment variable `DOFBOT_GRIPPER`
+(`stock` | `extended`, default `extended`). `gripper.py` picks its table from it;
+`dofbot.urdf` reads the *same* variable via `$(optenv DOFBOT_GRIPPER extended)`
+to include or drop the extension meshes.
+
+An env var rather than a `xacro:arg` because `urdf_launch` invokes xacro with no
+arguments at all, and display/mirror/gui_teleop all load the URDF through it.
+**If the two sides disagree, every grasp is planned short by the length of the
+extensions** and the arm drives into the object.
+
+Current state: `extended`, `CALIBRATED = True`, 50–105 mm (safe 53–102),
+`DEFAULT_SQUEEZE` 5.4 mm, `FINGER_DEPTH` 40 mm.
+
+---
+
+## Which numbers are measured, and which are derived
+
+This distinction has caused more trouble than anything else in the project.
+
+**Measured on hardware — do not recompute:**
+
+- Extended jaw widths (`grip_span_table.txt`). Strongly non-linear: the first
+  1.05 rad gives up 21 mm of span, the last 0.5 rad gives up 34 mm. A two-point
+  fit is ~15 mm out mid-travel.
+- `DEFAULT_SQUEEZE` = 5.4 mm, from the can held at a commanded 1.434 rad.
+- The 52 mm the extension tips rise beyond the stock ones.
+- Per-servo zero offsets in `joint_map.py`.
+- Base geometry: plate 145.0 × 120.0 × 3.0 mm offset −13.5 mm in x; arm base
+  r 40 mm cylinder z 3.0 → 82.8 mm.
+- `Z0` = 107.5 mm. **This arm's standoffs are exactly 18 mm shorter than
+  Yahboom's CAD**, so it differs from every shipped URDF. Shorter is *better*
+  here — raising the shoulder buys height but costs floor radius.
+
+**Legitimately derived from the URDF:**
+
+- Stock tip offsets (11.7–42.1 mm), from the `arm5 → Rlink1 → Rlink2` chain onto
+  the outermost vertex of the finger mesh. That's just the end of the finger.
+- Everything in `dofbot_kinematics`, transcribed from URDF joint origins and
+  cross-checked against `/compute_fk` to ~1e-16 m.
+
+**Traps that have actually bitten:**
+
+- Deriving jaw *width* from the URDF gave 25.8–85 mm. The FK was right; the
+  fingertip contact point was *assumed* 30 mm along `Rlink2_Link`, a number with
+  no basis. The real jaw face is coupler mesh geometry.
+- Recomputing extended tip offsets from `[RL]link2_Link_Ext.STL` gave 11.1 mm
+  instead of 52. **Those meshes are not in their link's frame** — they mirror
+  about y = −6.5 and occupy z = 0..7.5 while the stock fingers occupy z = −8..−2.
+  It was self-consistent, passed its own unit test, and would have driven the arm
+  41 mm into every object.
+- Deriving the standoff difference from a measured shoulder height gave 17.5 mm
+  when two direct measurements of the same feature gave exactly 18.0. **Anchor on
+  the difference between two like measurements, not on a difference against a
+  value you computed.**
+
+---
+
+## Collision geometry
+
+The shipped URDF reused raw CAD visual meshes for `<collision>`: 1,049,211
+triangles, `arm4_Link` alone at 246,098 against MoveIt's 10,000-vertex threshold.
+move_group took 45–60 s to start and `/check_state_validity` was slow enough to
+trip 10 s client timeouts.
+
+Now ~166k triangles. `scripts/make_collision_meshes.py` writes convex hulls of
+`arm1`–`arm4` (scipy only, no trimesh/open3d installed). `base_link` uses two
+primitives instead — it is mostly air, and its hull filled 62% of the bounding
+box.
+
+**A convex hull is wrong for anything with a functional concavity.** `arm5_Link`
+was hulled and then reverted: it is the gripper mount, a U-shaped yoke whose
+opening is exactly where the fingers sit. Same reason the finger links keep full
+meshes — hulling a finger fills the gap the object sits in, so the jaws read as
+permanently closed.
+
+**Judge a hull assembled, not per-part.** Numeric checks said the hulls were
+conservative and correctly contained; only looking at them on the robot showed
+arm5's was useless. `mirror.rviz` carries a second RobotModel display,
+"RobotModel (collision)", off by default at Alpha 0.5, for exactly this.
+
+Two facts that made hulls the right tool: several meshes are **not watertight**
+(`base_link` had 1,565 non-manifold edges), which topology-preserving decimation
+fights and qhull ignores; and **all ten arm-link pairs are already
+`disable_collisions` in the SRDF**, so hull inflation between arm links cannot
+cause a false positive.
+
+---
+
+## Running it
+
+```bash
+# simulation only, touches no serial port
+ros2 launch dofbot_ctrl pick_place.launch.py rviz:=false bridge:=false
+
+# on the robot, driving the real arm
+ros2 launch dofbot_ctrl pick_place.launch.py
+
+# then, in another terminal
+ros2 run dofbot_ctrl pick_place -- --check-states
+ros2 run dofbot_ctrl pick_place -- --plan-only 0.22 0.0 0.061
+ros2 run dofbot_ctrl pick_place -- 0.22 0.0 0.061      # can centre, on the floor
+```
+
+`x y z` is the object **centre** in `base_link` — for something resting on the
+floor that is half its height up, not 0.
+
+Read-only mirror (physical arm → RViz):
+
+```bash
+ros2 launch dofbot_ctrl mirror.launch.py
+```
+
+**For a remote display, run RViz and nothing else** on the other machine:
+`ros2 launch dofbot_moveit moveit_rviz.launch.py`. Running `pick_place.launch.py`
+with `bridge:=false` there starts a *second whole stack* — the symptom is two
+`/move_action` servers, "Ignoring unexpected goal response", and `CONTROL_FAILED`.
+
+Tests are pure Python, no ROS graph needed:
+
+```bash
+python3 -m pytest src/dofbot_ros2/dofbot_ctrl/test/ -q
+```
+
+---
+
+## Named poses
+
+`up`, `down`, `init`, `ready`, `carry`, `over_trash` — defined in **two places
+that must agree**: `NAMED_STATES` in `moveit_client.py` and the `group_state`
+entries in `dofbot_description.srdf`.
+
+Validate with `pick_place --check-states`, which checks each against the live
+planning scene. This is what stops a pose being eyeballed: the vendor's original
+`init` collided with `chassis_link` and nobody noticed until it was checked.
+
+`init` was hand-posed on the real arm and read out with `calibrate_zero`, so its
+joint values are physical fact. `over_trash` is **site-specific** — it assumes a
+bin off the left front with its rim below ~0.3 m.
+
+---
+
+## Working agreements
+
+- **Do not measure from the mesh. Ask Jim.** He has the physical part and Fusion.
+- He measures heights from the mounting plate's **top** face; `base_link` z=0 is
+  the **underside**. He adds the 3 mm himself.
+- Don't tell him to support the arm — it never falls.
+- He verifies in RViz; don't burn tokens on exhaustive automated testing.
+- Keep symbol names in one font (plain `phi`, not switching to code font).
+
+---
+
+## Known open items
+
+- **`floor_z_top:=-0.015`** in `chassis.xacro` was fitted empirically in RViz
+  against the old `Z0` of 125.5 mm. It may have absorbed part of that error and
+  needs a hardware re-check, or grasps come in high.
+- **The extension meshes render detached in RViz.** The URDF places them at
+  `origin 0 0 0` but they were exported in a different frame. Cosmetic —
+  `gripper.py` does not depend on it — but it looks wrong.
+- **Stock jaw widths are still a two-point stub.** `CALIBRATED` is False for that
+  profile only. Never caliper-swept.
+- **One finger has noticeable backlash**, so the pair is not symmetric whatever
+  the URDF's mimic multiplier says. The gap at a commanded angle has hysteresis
+  (the table was swept closing, and grasps close, so the normal path matches),
+  and the object does not sit on the gripper centreline — but `scene_objects`
+  attaches it symmetrically, so a small pose error is carried into the place.
+- **Execution is open-loop.** MoveIt believes the mock joints, not the encoders.
+  A stalled or blocked servo goes undetected.
+
+---
+
+## Gotchas that have cost real time
+
+- **Orphaned processes.** `pkill -f "...launch.py"` kills the launcher, not its
+  children. Two orphaned `joint_state_mirror` processes both held
+  `/dev/ttyTHS1` and corrupted each other's reads — indistinguishable from a dead
+  arm. `joint_state_mirror` now detects this and names the rival PID.
+- **A powered-off arm looks like a mesh problem.** No `/joint_states` → no TF →
+  RViz reports "No transform" for every link and draws only `base_link`. Both
+  hardware nodes now say so explicitly.
+- **`ET.write` strips comments** and reformats the whole file. Use it for
+  structural URDF edits, then re-insert comments. **Never use regex on the
+  URDF** — it was corrupted twice by append-instead-of-replace.
+- **XML comments cannot contain `--`.** Bit us three times.
+- **RViz rewrites its own config on exit** and strips YAML comments from it.
+- `mirror.rviz` needs `Durability Policy: Transient Local` — `robot_state_publisher`
+  latches `/robot_description`, so a Volatile subscriber only gets it by winning a
+  startup race. Speeding up the stack exposed this.
+
+---
+
+## Deliberately out of scope
+
+Oak-D integration, the camera → `base_link` static TF, hand-eye calibration, and
+visual servoing. The layer above attaches at exactly one seam: `pick(x, y, z)`.
+
+When perception arrives it supplies the **position**; `graspable.py` already
+supplies the size, grasp width and grip height. A depth camera returns a point on
+the near *surface*, so the caller steps along the view ray by the object radius to
+reach the centre — deliberately, once, in the caller.
