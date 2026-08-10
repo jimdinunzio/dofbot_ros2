@@ -47,6 +47,11 @@ class GraspableObject:
                 defaults to mid-height
     symmetric   True if wrist roll does not matter (an upright cylinder), so
                 theta5 is free and the approach azimuth alone fixes the grasp
+    squeeze     how much narrower than grasp_width to COMMAND, metres, so the
+                jaws load against the object instead of resting at contact.
+                None (the default) means gripper.DEFAULT_SQUEEZE, resolved at
+                grasp time so it follows a profile swap; a number here is a
+                grip that has been tuned on THIS object on hardware
     mesh        optional package:// URI of a Z-UP mesh to DRAW the object as.
                 Purely cosmetic -- collision still uses `shape` -- and it is
                 scaled to the fields above rather than trusted at its modelled
@@ -64,6 +69,7 @@ class GraspableObject:
     grasp_width: float = None
     grasp_height: float = None
     symmetric: bool = False
+    squeeze: float = None
     mesh: str = field(default=None, compare=False)
     note: str = field(default='', compare=False)
 
@@ -84,6 +90,15 @@ class GraspableObject:
         if not 0.0 < self.grasp_height < self.height:
             raise ObjectError('%s: grasp_height %.3f is not inside the object'
                               % (self.name, self.grasp_height))
+        # squeeze is deliberately NOT defaulted here the way the fields above
+        # are. Filling it in at construction would freeze whichever gripper was
+        # fitted when this module was imported into an object that outlives the
+        # swap, and the whole point of the catalogue is that fits_gripper() and
+        # friends stay live questions. None stays None; grip_angle() resolves it.
+        if self.squeeze is not None and self.squeeze < 0.0:
+            raise ObjectError('%s: squeeze %.4f is negative, which would '
+                              'command the jaws WIDER than the object and grip '
+                              'nothing' % (self.name, self.squeeze))
 
     # --------------------------------------------------------------- geometry
 
@@ -111,6 +126,18 @@ class GraspableObject:
 
     def fits_gripper(self):
         return gripper.fits(self.grasp_width)
+
+    def grip_angle(self):
+        """The angle to COMMAND to hold this object, radians.
+
+        Here rather than at the call site so a per-object squeeze cannot be
+        silently dropped by a caller that forgot to pass it -- the catalogue
+        entry is the source of truth for how hard this object is held, the same
+        way it already is for how wide it is.
+
+        Do not collision-check the result; see gripper.grip_angle_for.
+        """
+        return gripper.grip_angle_for(self.grasp_width, self.squeeze)
 
     def check(self):
         """Raise ObjectError if this gripper cannot take the object.
@@ -148,8 +175,32 @@ SODA_CAN = register(GraspableObject(
     shape='cylinder',
     width=0.066,
     height=0.122,
-    grasp_height=0.045,     # on the straight body, below the centre of mass
+    # THIS IS WHAT WAS ACTUALLY WRONG when the can would not stay in the jaws,
+    # and it masked everything else while it stood. At 45 mm the grip was low on
+    # the body; at 80 mm -- ABOVE the 61 mm centre of mass, so the can hangs
+    # from the jaws rather than balancing on them -- the pick works on hardware.
+    #
+    # Worth remembering before reaching for the gripper model next time: a grasp
+    # that fails is not evidence about jaw geometry until the grip HEIGHT has
+    # been ruled out. Both the squeeze below and gripper.BACK_STOP_CLEARANCE
+    # were tuned against this fault before it was found, which is why neither
+    # of them reads like the fix it was thought to be.
+    grasp_height=0.080,
     symmetric=True,
+    # Tuned on hardware for THIS object: hold it at Rlink1_Joint = 1.381 rad.
+    # That is a lighter squeeze than gripper.DEFAULT_SQUEEZE gives (1.412), so
+    # it overrides rather than replaces the default -- nothing else is asked to
+    # take the can's number.
+    #
+    # WHAT IS STORED IS A WIDTH, NOT THE ANGLE, because that is the coordinate
+    # the rest of the model works in: grip_angle_for interpolates
+    # grasp_width - squeeze through the fitted profile's table, so the number
+    # here is 66.0 - 63.0 mm. The consequence is that it is only worth 1.381
+    # against the CURRENT _EXTENDED rows -- re-key that table and this has to
+    # be re-derived, exactly like DEFAULT_SQUEEZE. test_grasp_model.py pins the
+    # resulting angle so a re-key cannot move it quietly.
+    squeeze=0.003,
+
     # Drawn from cokecan.obj, which is modelled 64.3 x 122.7 mm -- close to the
     # 66 x 122 above but not equal to it, which is exactly why scene_markers
     # rescales rather than trusting the file. The 1.8 mm is on the DIAMETER,

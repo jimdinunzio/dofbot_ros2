@@ -232,6 +232,11 @@ SAFE_MIN_WIDTH = round(MIN_WIDTH + CLEARANCE, 6)
 # the grounds that contact ought to be enough -- the compliant glove on each
 # finger and the play in one of them both swallow travel before any force
 # reaches the object.
+#
+# It is the FALLBACK, not the law: an object whose grip has been tuned on
+# hardware carries its own squeeze in the catalogue (GraspableObject.squeeze),
+# and the can now does. This stays the number for everything that has not been
+# tuned, which is why it is not simply re-fitted to the latest object measured.
 DEFAULT_SQUEEZE = 0.0054
 
 
@@ -402,16 +407,24 @@ def throat_offset_for(width):
     return tip_offset_for(width) - deeper
 
 
-def grip_angle_for(width, squeeze=DEFAULT_SQUEEZE):
+def grip_angle_for(width, squeeze=None):
     """The angle to COMMAND to hold an object `width` across.
 
     Commands the jaws slightly past contact so they load against the object.
     The servo stalls there, which is the normal and expected end of a grasp.
 
+    `squeeze=None` means DEFAULT_SQUEEZE, resolved HERE rather than baked into
+    the signature's default, so a catalogue entry can carry None to mean "the
+    profile's squeeze, whichever profile is bolted on when the grasp happens"
+    and still be constructed at import time. An entry that has been tuned on
+    hardware passes its own number instead -- see GraspableObject.squeeze.
+
     Do not collision-check this angle: the object stops the jaws at
     jaw_angle_for(width), so the commanded squeeze angle is a pose the gripper
     never reaches while it has hold of something.
     """
+    if squeeze is None:
+        squeeze = DEFAULT_SQUEEZE
     # Validate the OBJECT, then clamp the squeezed target to the stop. Passing
     # width - squeeze straight through would reject objects just above
     # SAFE_MIN_WIDTH for being too narrow, when it is the deliberate overshoot

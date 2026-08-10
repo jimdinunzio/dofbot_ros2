@@ -268,18 +268,58 @@ def test_the_measured_span_curve_is_not_a_straight_line():
             'span must fall monotonically from the over-centre peak at 0 rad'
 
 
-def test_the_can_is_held_where_the_robot_actually_held_it():
-    """Ground truth: the can was gripped on hardware and the servo settled here.
-
-    DEFAULT_SQUEEZE was calibrated in the pre-re-key coordinates and was not
+def test_the_default_squeeze_survived_the_re_key():
+    """DEFAULT_SQUEEZE was calibrated in the pre-re-key coordinates and was not
     adjusted afterwards, so this passing is a real check rather than a tautology:
     a squeeze fitted in the old frame still lands on the same PHYSICAL grip in
     the new one, which is what a coordinate change should leave alone.
+
+    This is the fallback for an UNTUNED object, which is why it is asserted at
+    the can's width but no longer through the can -- see the test below.
+
+    The 1.411 IS the hard-coded value here, and deliberately: it is the angle
+    the servo settled at on the real arm, so it is a measurement the code is
+    checked against rather than a number copied out of the code. Derive it and
+    the test would assert nothing. The width it is measured at comes from the
+    catalogue, since that is a fact the code owns.
     """
+    can = get('soda_can')
     with as_profile('extended') as g:
-        assert g.grip_angle_for(0.066) == pytest.approx(1.411, abs=0.003)
+        w = can.grasp_width
+        assert g.grip_angle_for(w) == pytest.approx(1.411, abs=0.003)
         # The squeeze is real travel past contact, not a rounding artefact.
-        assert g.grip_angle_for(0.066) > g.jaw_angle_for(0.066) + 0.04
+        assert g.grip_angle_for(w) > g.jaw_angle_for(w) + 0.04
+
+
+def test_the_can_is_held_at_its_own_tuned_angle():
+    """The can carries a hand-tuned squeeze, so it is NOT held at the default.
+
+    Asserted as RELATIONS rather than against the angle it currently produces:
+    the squeeze is retuned on hardware, and a literal here would have to be
+    edited every time, which makes it a transcription of the code rather than a
+    check on it. The test above still pins one real angle -- the measured
+    DEFAULT_SQUEEZE ground truth -- and that is the right place for a number.
+    """
+    can = get('soda_can')
+    with as_profile('extended') as g:
+        assert can.squeeze is not None                  # tuned, not inherited
+        assert can.grip_angle() == pytest.approx(
+            g.grip_angle_for(can.grasp_width, can.squeeze))
+        # Past contact, so the jaws load against the can rather than resting
+        # on it, and LOOSER than the untuned default.
+        assert g.jaw_angle_for(can.grasp_width) < can.grip_angle() \
+            < g.grip_angle_for(can.grasp_width)
+
+
+def test_an_untuned_object_follows_the_profile_default():
+    """squeeze=None must stay live, not freeze the gripper fitted at import."""
+    block = get('test_block')
+    assert block.squeeze is None
+    with as_profile('stock') as g:
+        assert block.grip_angle() == pytest.approx(
+            g.grip_angle_for(block.grasp_width, g.DEFAULT_SQUEEZE))
+
+
 def _advance(g, width):
     """How much deeper than the fingertip the throat lookup drives the TCP."""
     return g.tip_offset_for(width) - g.throat_offset_for(width)

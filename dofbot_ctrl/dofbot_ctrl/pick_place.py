@@ -119,7 +119,7 @@ usable range of grip heights. (Reachability only. Whether a tall can fouls the
 wrist once attached is a collision question, and only move_group answers it.)
 
 Related, and the same mistake in a different place: never collision-check the
-COMMANDED jaw angle. grip_angle_for() deliberately asks for narrower than the
+COMMANDED jaw angle. obj.grip_angle() deliberately asks for narrower than the
 object so the servo loads up against it, but the object stops the jaws at its
 own width, so the commanded angle is a pose the gripper never occupies while
 holding anything. Check jaw_angle_for(width).
@@ -432,7 +432,7 @@ class PickPlace(Node):
         self.mc.move_pose(*pre)
         self.mc.cartesian_move(grasp)
 
-        self.mc.set_gripper(gripper.grip_angle_for(obj.grasp_width))
+        self.mc.set_gripper(obj.grip_angle())
 
         # theta5 is whatever the approach left it at; for a symmetric object it
         # does not matter, and for anything else it is the caller's to set.
