@@ -21,6 +21,21 @@ Design, and why each piece is here:
   it near the tick period lets the servo interpolate smoothly from one sample to
   the next instead of snapping.
 
+- The gripper gets its own move time, in its own packet. A jaw close arrives as
+  ONE step: the gripper controller commands a position, mock hardware echoes it
+  back in the same cycle, and nothing re-sends it. So the servo runs the whole
+  travel at the duration it was handed -- `grip_time_ms` IS the closing speed,
+  and doubling it halves it. The arm cannot be slowed this way: its writes are
+  reissued every tick, so each one is cut short by the next.
+
+  AND THE ARM MUST NOT ADDRESS SERVO 6 WHILE THAT MOVE IS RUNNING. write6
+  re-commands all six, so an arm write landing mid-close replaces the slow move
+  with a track_time one and the jaws snap shut -- measured, and it is why a
+  2000 ms close obeyed a lone action goal and did nothing in a full pick. While
+  the move is in flight the arm is written as five individual packets instead.
+  moveit_client also waits the duration out before moving on, which is the
+  other half: this half keeps the promise even when something else is driving.
+
 - Slow first move (sync). When this node starts, /joint_states reflects MoveIt's
   model pose, which may be far from where the real arm physically is. The first
   write eases the arm there over `sync_time_ms` so it doesn't hard-snap. After
@@ -48,6 +63,10 @@ from dofbot_ctrl.joint_map import JOINT_NAMES, urdf_to_servo
 # A target within this many servo degrees of the last write counts as unchanged.
 _STEP_DEG = 0.5
 
+# Servo id of the gripper, and its slot in a JOINT_NAMES-ordered target.
+_GRIP_ID = 6
+_GRIP = _GRIP_ID - 1
+
 
 class MoveItBridge(Node):
 
@@ -57,6 +76,26 @@ class MoveItBridge(Node):
         self.declare_parameter('rate', 10.0)           # servo write rate (Hz)
         self.declare_parameter('track_time_ms', 200)   # per-step servo move time
         self.declare_parameter('sync_time_ms', 2000)   # first (sync) move time
+        # HOW FAST THE JAWS CLOSE, and the ONLY place the number lives. The
+        # gripper's whole travel used to arrive as one track_time_ms write, so
+        # twice that is half speed. There is no speed to scale anywhere above,
+        # because GripperCommand carries a position and no velocity.
+        #
+        # Deliberately NOT also a launch argument. It was one, defaulting to
+        # 400, and a launch default beats the default here -- so editing this
+        # line changed nothing on a launched stack and the close stayed fast for
+        # a value nobody had typed. One default, in the node that sends it.
+        #
+        # Read at every write rather than cached, so
+        #     ros2 param set /moveit_bridge grip_time_ms 800
+        # takes effect on the next close. This is the number that gets tuned
+        # against a real object in the jaws, and relaunching to try a value
+        # makes that a much slower loop than it needs to be.
+        #
+        # The servo's field is 12 bits of milliseconds (protocol 0x2A: time_H is
+        # 0x00-0x0F), so anything past 4095 is not a slower close -- it is a
+        # different move time entirely, wrapped.
+        self.declare_parameter('grip_time_ms', 2000)   # gripper-only move time
 
         port = self.get_parameter('port').value
         rate = self.get_parameter('rate').value
@@ -86,12 +125,21 @@ class MoveItBridge(Node):
         self.target = None        # latest servo command (deg) from /joint_states
         self.last_written = None
         self.synced = False
+        # When the gripper's current move is due to finish (clock ns). Until
+        # then servo 6 must not be addressed again -- see tick().
+        self.grip_until = 0
 
         self.create_subscription(JointState, '/joint_states', self.on_js, 10)
         self.timer = self.create_timer(1.0 / rate, self.tick)
         self.get_logger().info(
-            'Following /joint_states -> servos at %.1f Hz. The first move is a '
-            'slow sync to the model pose -- support the arm.' % rate)
+            'Following /joint_states -> servos at %.1f Hz, gripper moves over '
+            '%d ms (live: ros2 param set /moveit_bridge grip_time_ms N). The '
+            'first move is a slow sync to the model pose -- support the arm.'
+            % (rate, self.grip_time()))
+
+    def grip_time(self):
+        """The gripper's move time, in ms, as it stands right now."""
+        return int(self.get_parameter('grip_time_ms').value)
 
     def on_js(self, msg):
         """Store the newest pose as a servo command. Ignore partial messages
@@ -112,14 +160,41 @@ class MoveItBridge(Node):
             self.synced = True
             return
 
-        if self.last_written is not None and all(
-                abs(a - b) <= _STEP_DEG
-                for a, b in zip(self.target, self.last_written)):
+        moved = [abs(a - b) > _STEP_DEG
+                 for a, b in zip(self.target, self.last_written)]
+        if not any(moved):
             return  # unchanged -> don't hammer the bus
 
-        self.arm.Arm_serial_servo_write6(*self.target, time=self.track_time)
-        self.last_written = self.target
+        now = self.get_clock().now().nanoseconds
 
+        if moved[_GRIP]:
+            # The gripper gets its own packet and its own duration. Logged
+            # because this is the write whose duration is tuned by hand, and
+            # "did the value I set reach a packet?" is otherwise unanswerable
+            # from outside.
+            ms = self.grip_time()
+            self.get_logger().info('gripper -> %.1f servo deg over %d ms'
+                                   % (self.target[_GRIP], ms))
+            self.arm.Arm_serial_servo_write(_GRIP_ID, self.target[_GRIP], ms)
+            self.grip_until = now + ms * 1000000
+
+        if any(moved[:_GRIP]):
+            if now < self.grip_until:
+                # AN ARM MOVE WITH THE JAWS STILL CLOSING, and write6 would
+                # ruin it: it addresses all six servos, so it re-commands the
+                # gripper -- same position, track_time to get there -- and the
+                # servo abandons the slow move for the fast one. THAT is what
+                # made grip_time_ms look like it did nothing while the isolated
+                # action goal obeyed it perfectly. Five packets instead of six,
+                # and servo 6 is left alone to finish.
+                for sid in range(1, _GRIP_ID):
+                    self.arm.Arm_serial_servo_write(sid, self.target[sid - 1],
+                                                    self.track_time)
+            else:
+                self.arm.Arm_serial_servo_write6(*self.target,
+                                                 time=self.track_time)
+
+        self.last_written = self.target
 
 def main(args=None):
     rclpy.init(args=args)

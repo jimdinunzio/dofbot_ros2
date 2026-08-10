@@ -14,6 +14,12 @@ controllers over their plain ROS interfaces:
     /arm_group_controller/follow_joint_trajectory   FollowJointTrajectory
     /grip_group_controller/gripper_cmd              GripperCommand
     /joint_states                                   JointState       (topic)
+    /moveit_bridge/get_parameters                   GetParameters    (service)
+
+The last one is the odd one out and is deliberate: everything else here talks to
+MoveIt, which is driving MOCK joints. set_gripper asks the bridge how long the
+real servo takes, because that is the one place a mock joint's word is not good
+enough -- see _gripper_settle().
 
 TWO KINDS OF MOTION, AND WHY
 ----------------------------
@@ -58,6 +64,8 @@ from rclpy.action import ActionClient
 
 from control_msgs.action import FollowJointTrajectory, GripperCommand
 from geometry_msgs.msg import Pose
+from rcl_interfaces.msg import ParameterType
+from rcl_interfaces.srv import GetParameters
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (AllowedCollisionEntry, AttachedCollisionObject,
                              CollisionObject, Constraints, JointConstraint,
@@ -96,6 +104,12 @@ WRIST_LINK = 'arm5_Link'
 GRIPPER_LINKS = FINGER_LINKS + (TOOL_LINK, WRIST_LINK)
 
 BASE_FRAME = 'base_link'
+
+# The node that owns the real servos, and the parameter holding how long it
+# gives the gripper. Asked for rather than copied: a second number here that
+# drifted from the bridge's would silently reintroduce the truncation bug.
+BRIDGE_NODE = 'moveit_bridge'
+BRIDGE_GRIP_TIME = 'grip_time_ms'
 
 # Named arm states, in ARM_JOINT_NAMES order. These mirror the group_states in
 # dofbot_description.srdf -- change both together.
@@ -187,6 +201,10 @@ class DofbotMoveIt:
                                          '/apply_planning_scene')
         self._scene = node.create_client(GetPlanningScene,
                                          '/get_planning_scene')
+        # Not MoveIt's. The one question only the hardware bridge can answer.
+        self._bridge = node.create_client(
+            GetParameters, '/%s/get_parameters' % BRIDGE_NODE)
+        self._no_bridge_logged = False
 
         # Motion tuning. max_joint_speed is not cosmetic: moveit_bridge writes to
         # the servos at 10 Hz and skips deltas under 0.5 servo-degrees, so a
@@ -544,8 +562,63 @@ class DofbotMoveIt:
 
     # ----------------------------------------------------------------- gripper
 
+    def _sleep(self, seconds):
+        """Block for `seconds` while still servicing this node's callbacks.
+
+        The gripper wait is the only place here that waits on the clock rather
+        than on a future, and it still has to keep /joint_states flowing --
+        current_joints() reads exactly that, and the next thing a pick does
+        after closing the jaws is read the arm's pose.
+        """
+        end = self.node.get_clock().now().nanoseconds + int(seconds * 1e9)
+        while True:
+            left = (end - self.node.get_clock().now().nanoseconds) / 1e9
+            if left <= 0.0:
+                return
+            rclpy.spin_once(self.node, timeout_sec=left)
+
+    def _gripper_settle(self):
+        """Seconds the real jaws still need after the action says they arrived.
+
+        THE GRIPPER ACTION IS NOT A REPORT ABOUT THE HARDWARE. It finishes when
+        the MOCK joint reaches the goal, which is the cycle after it is sent,
+        while the servo is only just starting to move. Everything else here can
+        ignore that gap, because an arm trajectory is re-sent every tick and the
+        bridge just tracks it. The gripper is different: it is ONE write, and
+        moveit_bridge hands the servo grip_time_ms to execute it over.
+
+        Return before that elapses and the next arm write re-commands all six
+        servos, replacing the slow move with a fast one -- so a 2000 ms close
+        obeyed a lone action goal and did nothing at all inside a pick. It also
+        means the arm would start lifting with the object not yet gripped.
+
+        The duration is asked of the bridge, never copied, so the packet's time
+        and the wait for it cannot drift apart. NO BRIDGE MEANS NO SERVOS --
+        simulation -- and then there is nothing to wait for.
+        """
+        if not self._bridge.wait_for_service(timeout_sec=0.5):
+            if not self._no_bridge_logged:
+                self.log.info('no %s -- simulation, so not waiting on a servo'
+                              % BRIDGE_NODE)
+                self._no_bridge_logged = True
+            return 0.0
+        req = GetParameters.Request(names=[BRIDGE_GRIP_TIME])
+        res = self._spin_until(self._bridge.call_async(req), timeout=2.0,
+                               what='%s %s' % (BRIDGE_NODE, BRIDGE_GRIP_TIME))
+        # An older bridge without the parameter answers PARAMETER_NOT_SET, which
+        # is not an error here -- it means that bridge never slows the gripper,
+        # so there is nothing extra to wait for.
+        if not res.values or res.values[0].type != ParameterType.PARAMETER_INTEGER:
+            return 0.0
+        return res.values[0].integer_value / 1000.0
+
     def set_gripper(self, angle, max_effort=10.0):
-        """Command Rlink1_Joint, in radians. 0 = open, ~1.5 = closed."""
+        """Command Rlink1_Joint, in radians. 0 = open, ~1.5 = closed.
+
+        Returns once the REAL jaws have finished moving, not merely once the
+        action has -- see _gripper_settle() for why those are different and
+        what goes wrong when the difference is ignored.
+        """
         goal = GripperCommand.Goal()
         goal.command.position = float(angle)
         goal.command.max_effort = float(max_effort)
@@ -558,6 +631,12 @@ class DofbotMoveIt:
         if not result.reached_goal:
             self.log.info('gripper stopped at %.3f rad (stalled -- expected '
                           'when it has hold of something)' % result.position)
+        # Timed from HERE, with nothing deducted for the round trip: the bridge
+        # samples at 10 Hz, so the servo has not necessarily been given the move
+        # even by the time the action returns. Erring long costs a tenth of a
+        # second; erring short lets the next arm write cut the close off, which
+        # is the whole bug.
+        self._sleep(self._gripper_settle())
         return result
 
     def open_gripper(self):

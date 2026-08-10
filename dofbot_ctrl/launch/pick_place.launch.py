@@ -97,6 +97,10 @@ def generate_launch_description():
         package='dofbot_ctrl', executable='moveit_bridge',
         name='moveit_bridge', output='screen',
         condition=IfCondition(LaunchConfiguration('bridge')),
+        # Only the port. grip_time_ms is deliberately NOT passed from here: a
+        # launch default silently outranks the node's own, so the value in
+        # moveit_bridge.py would stop being the value in use. Change it there,
+        # or with `ros2 param set` on the running node.
         parameters=[{'port': LaunchConfiguration('port')}]))
 
     return ld
