@@ -21,6 +21,7 @@ on the path at all (e.g. pytest outside a sourced workspace).
 """
 
 import contextlib
+import dataclasses
 import importlib
 import os
 from math import cos, hypot, isclose, sin
@@ -489,6 +490,86 @@ def test_catalogue_entries_all_construct():
     for name, obj in CATALOGUE.items():
         assert obj.name == name
         assert obj.height > 0 and obj.width > 0
+
+
+# ------------------------------------------------------- the grip-height band
+#
+# An object may offer a BAND of grip heights rather than one. It exists because
+# where the jaws close barely changes what the arm can reach but does change the
+# posture it has to strike, and near the inner edge of the working ring that is
+# the difference between a solution with joint room to spare and none at all.
+# The nominal grasp_height stays the preferred one -- for the can it is the
+# height proven on hardware -- so the band widens it, it does not replace it.
+
+
+def test_a_bad_grip_height_band_is_refused_at_construction():
+    tall = dict(name='x', shape='box', width=0.02, height=0.10,
+                grasp_height=0.05)
+    # outside the object
+    with pytest.raises(ObjectError, match='grasp_height_range'):
+        GraspableObject(grasp_height_range=(0.05, 0.20), **tall)
+    with pytest.raises(ObjectError, match='grasp_height_range'):
+        GraspableObject(grasp_height_range=(0.0, 0.06), **tall)
+    # inverted
+    with pytest.raises(ObjectError, match='grasp_height_range'):
+        GraspableObject(grasp_height_range=(0.06, 0.04), **tall)
+    # excludes the object's own nominal height, which would leave it with no
+    # height it is actually known to be gripped at
+    with pytest.raises(ObjectError, match='outside its own'):
+        GraspableObject(grasp_height_range=(0.06, 0.08), **tall)
+
+
+def test_a_band_is_stored_as_a_tuple_so_the_entry_stays_hashable():
+    obj = GraspableObject(name='x', shape='box', width=0.02, height=0.10,
+                          grasp_height=0.05, grasp_height_range=[0.04, 0.06])
+    assert obj.grasp_height_range == (0.04, 0.06)
+    hash(obj)
+
+
+def test_no_band_means_the_nominal_height_is_the_only_option():
+    block = get('test_block')
+    assert block.grasp_height_range is None
+    assert block.grasp_heights() == (block.grasp_height,)
+
+
+def test_the_band_spans_the_range_and_keeps_the_nominal_first():
+    can = get('soda_can')
+    low, high = can.grasp_height_range
+    heights = can.grasp_heights()
+    # PREFERRED FIRST is the contract the scorer's tie-break reads.
+    assert heights[0] == can.grasp_height
+    assert min(heights) == pytest.approx(low)
+    assert max(heights) == pytest.approx(high)
+    assert all(low - 1e-9 <= h <= high + 1e-9 for h in heights)
+    assert len(set(heights)) == len(heights)
+    # and every one of them is a height the object can actually be gripped at
+    assert all(0.0 < h < can.height for h in heights)
+
+
+def test_the_nominal_height_survives_a_step_that_would_walk_past_it():
+    """The stepping starts at the low end, so an odd nominal is easy to miss."""
+    obj = GraspableObject(name='x', shape='box', width=0.02, height=0.10,
+                          grasp_height=0.043, grasp_height_range=(0.04, 0.06))
+    heights = obj.grasp_heights(step=0.005)
+    assert obj.grasp_height in heights
+    assert heights[0] == obj.grasp_height
+
+
+def test_substituting_a_height_moves_the_centre_offset_with_it():
+    """What the pick sequence does once the sweep has chosen a height.
+
+    centre_offset() is what scene_objects.held_pose measures the attached
+    object from, so a chosen height that did not reach it would put the can in
+    the scene somewhere the arm is not holding it.
+    """
+    can = get('soda_can')
+    for height in can.grasp_heights():
+        at_height = dataclasses.replace(can, grasp_height=height)
+        assert at_height.centre_offset() == pytest.approx(
+            can.height / 2.0 - height)
+        # the grasp point drops with it, one for one
+        assert (scene_objects.grasp_point(at_height, 0.25, 0.0, 0.061)[2]
+                == pytest.approx(0.061 - can.height / 2.0 + height))
 
 
 # ------------------------------------------------------- scene_objects maths

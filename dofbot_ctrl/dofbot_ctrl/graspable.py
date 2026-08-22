@@ -44,7 +44,15 @@ class GraspableObject:
     depth       second horizontal extent; boxes only, defaults to `width`
     grasp_width the dimension actually between the jaws, defaults to `width`
     grasp_height height ABOVE THE OBJECT'S BASE at which to close the jaws,
-                defaults to mid-height
+                defaults to mid-height. This is the PREFERRED height, the one
+                known to work; grasp_height_range is what may be traded away
+    grasp_height_range (lo, hi) band of grip heights the pick sequence is
+                allowed to choose from when the preferred one does not solve,
+                metres above the base and inclusive. None means grasp_height is
+                the only option. Both ends must lie inside the object and the
+                band must contain grasp_height -- an object that cannot be
+                gripped at its own nominal height is a catalogue error, not a
+                runtime one
     symmetric   True if wrist roll does not matter (an upright cylinder), so
                 theta5 is free and the approach azimuth alone fixes the grasp
     squeeze     how much narrower than grasp_width to COMMAND, metres, so the
@@ -68,6 +76,7 @@ class GraspableObject:
     depth: float = None
     grasp_width: float = None
     grasp_height: float = None
+    grasp_height_range: tuple = None
     symmetric: bool = False
     squeeze: float = None
     mesh: str = field(default=None, compare=False)
@@ -90,6 +99,24 @@ class GraspableObject:
         if not 0.0 < self.grasp_height < self.height:
             raise ObjectError('%s: grasp_height %.3f is not inside the object'
                               % (self.name, self.grasp_height))
+        if self.grasp_height_range is not None:
+            # A frozen dataclass has to stay hashable, and a list here would
+            # also make two otherwise-identical entries compare unequal.
+            object.__setattr__(self, 'grasp_height_range',
+                               tuple(self.grasp_height_range))
+            low, high = self.grasp_height_range
+            if not 0.0 < low <= high < self.height:
+                raise ObjectError(
+                    '%s: grasp_height_range %.3f..%.3f is not inside the '
+                    'object' % (self.name, low, high))
+            # The range WIDENS the preferred height, it does not replace it, so
+            # excluding grasp_height would leave the object with no height it is
+            # actually known to be gripped at.
+            if not low <= self.grasp_height <= high:
+                raise ObjectError(
+                    '%s: grasp_height %.3f is outside its own '
+                    'grasp_height_range %.3f..%.3f'
+                    % (self.name, self.grasp_height, low, high))
         # squeeze is deliberately NOT defaulted here the way the fields above
         # are. Filling it in at construction would freeze whichever gripper was
         # fitted when this module was imported into an object that outlives the
@@ -121,6 +148,27 @@ class GraspableObject:
         place the object correctly once it is attached to the gripper.
         """
         return self.height / 2.0 - self.grasp_height
+
+    def grasp_heights(self, step=0.005):
+        """Grip heights the pick sequence may choose from, PREFERRED FIRST.
+
+        Where on the object the jaws close barely changes what the arm can
+        reach -- the feasible band moves by a few millimetres across the whole
+        usable range -- but it changes the POSTURE the arm has to strike to get
+        there, and near the inner edge of the working ring that is the
+        difference between a solution with joint room to spare and none at all.
+
+        Ordered nearest the nominal grasp_height first so the caller's
+        tie-breaks and its diagnostics both read in order of preference. The
+        nominal is always in the list even when the stepping would walk past it.
+        """
+        if self.grasp_height_range is None:
+            return (self.grasp_height,)
+        low, high = self.grasp_height_range
+        n = int(round((high - low) / step))
+        heights = {round(low + i * step, 6) for i in range(n + 1)}
+        heights.add(self.grasp_height)
+        return tuple(sorted(heights, key=lambda h: (abs(h - self.grasp_height), h)))
 
     # ------------------------------------------------------------- validation
 
@@ -186,26 +234,22 @@ SODA_CAN = register(GraspableObject(
     # were tuned against this fault before it was found, which is why neither
     # of them reads like the fix it was thought to be.
     grasp_height=0.080,
-    symmetric=True,
-    # Tuned on hardware for THIS object: hold it at Rlink1_Joint = 1.381 rad.
-    # That is a lighter squeeze than gripper.DEFAULT_SQUEEZE gives (1.412), so
-    # it overrides rather than replaces the default -- nothing else is asked to
-    # take the can's number.
+
+    # Room to trade when 80 mm will not solve, and only then -- the scorer in
+    # pick_place quantises its preferences so that a difference too small to
+    # mean anything cannot outvote the height above, which is the one proven on
+    # hardware. 
     #
+    # The ends are the straight body of the can: above the base taper, below
+    # where the shoulder starts to draw in at ~105 mm. Gripping outside that is
+    # a curved surface, and the jaw faces are flat.
+    grasp_height_range=(0.070, 0.100),
+    symmetric=True,
     # WHAT IS STORED IS A WIDTH, NOT THE ANGLE, because that is the coordinate
     # the rest of the model works in: grip_angle_for interpolates
-    # grasp_width - squeeze through the fitted profile's table, so the number
-    # here is 66.0 - 63.0 mm. The consequence is that it is only worth 1.381
-    # against the CURRENT _EXTENDED rows -- re-key that table and this has to
-    # be re-derived, exactly like DEFAULT_SQUEEZE. test_grasp_model.py pins the
-    # resulting angle so a re-key cannot move it quietly.
+    # grasp_width
     squeeze=0.003,
 
-    # Drawn from cokecan.obj, which is modelled 64.3 x 122.7 mm -- close to the
-    # 66 x 122 above but not equal to it, which is exactly why scene_markers
-    # rescales rather than trusting the file. The 1.8 mm is on the DIAMETER,
-    # the dimension the jaws close on, so letting the drawing win would put the
-    # picture and the grasp 0.9 mm apart.
     mesh='package://dofbot_description/meshes/cokecan.obj'))
 
 # NEEDS THE STOCK JAWS: it passes straight between the extended fingers, which
