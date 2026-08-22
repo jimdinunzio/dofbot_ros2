@@ -70,18 +70,30 @@ RAW_MAX = 4000
 # pos = num - _CTRL5_OFFSET.
 _CTRL5_OFFSET = 514
 
+# Wire length of a reply frame: 0xFF 0xF5 | id | len | cmd | val_H | val_L | chk.
+# _parse_reply needs the 0xF5 plus the six bytes after it.
+_REPLY_LEN = 8
+
+# Seconds to wait for a reply. Paid only when a servo does NOT answer: _query
+# returns as soon as a valid frame parses, and the frame is ~0.7ms on the wire.
+REPLY_TIMEOUT = 0.02
+
 
 class Arm_Driver(object):
 
-    def __init__(self, com="/dev/ttyTHS1", baudrate=115200):
+    def __init__(self, com="/dev/ttyTHS1", baudrate=115200,
+                 reply_timeout=REPLY_TIMEOUT):
         """
-        com       serial port (Jetson hardware UART, e.g. /dev/ttyTHS1).
-        baudrate  115200 (8N1) for YB-SD15M.
+        com            serial port (Jetson hardware UART, e.g. /dev/ttyTHS1).
+        baudrate       115200 (8N1) for YB-SD15M.
+        reply_timeout  seconds to wait for a reply; the cost of a query that
+                       gets no answer. An answered one returns immediately.
         """
         self.port = com
+        self.reply_timeout = reply_timeout
         # timeout >= 10ms: full 8-byte reply ~= 0.7ms at 115200, plus servo
         # processing headroom.
-        self.ser = serial.Serial(com, baudrate, timeout=0.02)
+        self.ser = serial.Serial(com, baudrate, timeout=reply_timeout)
         # The serial port is a single shared resource; serialize a write and its
         # echo/reply so concurrent threads cannot interleave bus traffic.
         self.lock = threading.Lock()
@@ -112,16 +124,38 @@ class Arm_Driver(object):
     def _query(self, id, cmd, addr, data, expect_id=None):
         """Transmit a command and read its reply as one atomic transaction (held
         under a single lock so the write and its reply cannot interleave with
-        another thread). Returns the raw position value (96..4000) or None."""
+        another thread). Returns the raw position value (96..4000) or None.
+
+        Never ask for a fixed byte count here: pyserial's read(size) returns
+        early only once `size` bytes arrive, so asking for more than a frame
+        makes every read -- answered or not -- block for the whole timeout.
+
+        The input buffer is drained before transmitting. A reply that arrived
+        after its own query timed out would otherwise answer the retry, which
+        re-queries the same id, so the id check cannot catch it.
+        """
         frame = self._build_frame(id, cmd, addr, data)
+        deadline = time.monotonic() + self.reply_timeout
         try:
             with self.lock:
+                self.ser.reset_input_buffer()
                 self.ser.write(frame)
-                buf = self.ser.read(32)
+                buf = b''
+                while True:
+                    # read(1) blocks up to the port timeout, so an absent servo
+                    # costs one timeout and no spinning. Once bytes are
+                    # flowing, in_waiting takes the rest of the frame at once.
+                    chunk = self.ser.read(max(1, self.ser.in_waiting))
+                    if chunk:
+                        buf += chunk
+                        val = self._parse_reply(buf, expect_id)
+                        if val is not None:
+                            return val
+                    if time.monotonic() >= deadline:
+                        return None
         except Exception:
             print('Arm_Driver serial query error')
             return None
-        return self._parse_reply(buf, expect_id)
 
     def _parse_reply(self, buf, expect_id=None):
         """Scan the RX stream for the 0xF5-framed reply, verify checksum, return
@@ -158,6 +192,28 @@ class Arm_Driver(object):
         if id == 5:
             return int((ANGLE5_MAX - ANGLE5_MIN) * (pos - POS5_MIN) / (POS5_MAX - POS5_MIN) + ANGLE5_MIN)
         angle = int((ANGLE_MAX - ANGLE_MIN) * (pos - POS_MIN) / (POS_MAX - POS_MIN) + ANGLE_MIN)
+        if id in _INVERTED_IDS:
+            angle = ANGLE_MIN + ANGLE_MAX - angle
+        return angle
+
+    @staticmethod
+    def _pos_to_angle_f(id, pos):
+        """Raw position -> API angle in degrees, WITHOUT the int() truncation.
+
+        A count is 0.082 deg; _pos_to_angle's whole degrees are 0.0175 rad,
+        coarser than the 0.5-servo-degree step moveit_bridge uses to decide a
+        joint moved at all.
+
+        Separate from _pos_to_angle rather than replacing it, because the two
+        disagree on the inverted servos -- that one inverts an already-truncated
+        angle, and int(180 - f) != 180 - int(f). The zero offsets in joint_map
+        were measured against its output, so it must not move.
+        """
+        if id == 5:
+            return ((ANGLE5_MAX - ANGLE5_MIN) * (pos - POS5_MIN)
+                    / (POS5_MAX - POS5_MIN) + ANGLE5_MIN)
+        angle = ((ANGLE_MAX - ANGLE_MIN) * (pos - POS_MIN)
+                 / (POS_MAX - POS_MIN) + ANGLE_MIN)
         if id in _INVERTED_IDS:
             angle = ANGLE_MIN + ANGLE_MAX - angle
         return angle
@@ -241,6 +297,45 @@ class Arm_Driver(object):
                 return pos
             time.sleep(0.003)
         return None
+
+    # Read one servo's angle as a FLOAT (no int() truncation), or None.
+    # retries defaults to 1: a feedback caller wants a bounded cost per sample
+    # and would rather see the drop. Arm_serial_servo_read's 5 suits
+    # calibration, where a missed reading is worth half a second to avoid.
+    def Arm_serial_servo_read_f(self, id, retries=1):
+        if id < 1 or id > 6:
+            print("id must be 1 - 6")
+            return None
+        for attempt in range(max(1, retries)):
+            pos = self._query(id, _CMD_READ, _ADDR_READ_POS, [0x02], expect_id=id)
+            if pos:  # not None and not 0
+                return self._pos_to_angle_f(id, pos)
+            if attempt + 1 < retries:
+                time.sleep(0.003)
+        return None
+
+    # Read all six servos in one sweep: six floats (degrees), None for any
+    # servo that did not answer. The primitive for state feedback -- one call,
+    # bounded cost, and the caller sees which servos were silent.
+    def Arm_serial_servo_read6(self, retries=1):
+        return [self.Arm_serial_servo_read_f(sid, retries)
+                for sid in range(1, 7)]
+
+    # Read all six RAW positions (96..4000), None per silent servo. Use raw
+    # when the question is resolution or drift rather than joint angles.
+    def Arm_serial_servo_read6_raw(self, retries=1):
+        out = []
+        for sid in range(1, 7):
+            pos = None
+            for attempt in range(max(1, retries)):
+                pos = self._query(sid, _CMD_READ, _ADDR_READ_POS, [0x02],
+                                  expect_id=sid)
+                if pos:
+                    break
+                if attempt + 1 < retries:
+                    time.sleep(0.003)
+            out.append(pos if pos else None)
+        return out
 
     # Ping a servo. Returns 0xDA on success (mirrors Arm_Lib's "alive" sentinel),
     # None if no valid reply after retries.
