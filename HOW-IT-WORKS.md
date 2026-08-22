@@ -256,25 +256,49 @@ wherever it got to. The scene is read before anything is deleted, because
 `detach`/`remove` are not no-ops on an absent object. Detach before remove:
 removing a *world* object doesn't touch an *attached* one.
 
-**2. Choose a feasible approach** (`_feasible_approach`). For each candidate
-phi, nearest-first from `grasp_pitch`:
+**2. Choose a feasible approach** (`_feasible_approach`). Three things are being
+chosen, not one — the tool pitch, the grip height, and how long the final
+straight-line approach is. For every (grasp_height, phi) pair:
 
 ```
-contact  = grasp_point(obj, x, y, z)          # object geometry only
+contact  = grasp_point(obj@height, x, y, z)   # object geometry only
 hover    = throat_offset_for(grasp_width)     # gripper geometry only
 grasp    = back_off(contact, phi, hover)              ← the TCP target
+standoff = the LONGEST that solves, from `standoff` down to `min_standoff`
 pre      = back_off(contact, phi, hover + standoff)
 mid      = midpoint(pre, grasp)
 ```
 
-All three are screened by analytic IK (microseconds), then the survivor's grasp
-pose gets one `/check_state_validity` call **with the jaws at
-`jaw_angle_for(width)`**. The midpoint is not redundant: the reachable set is not
-convex, so two good endpoints do not imply a good line between them.
+All three poses are screened by analytic IK (microseconds); the whole nested
+sweep is 64 ms and ~4300 `ik_best` calls, so nothing here is worth optimising.
+The midpoint is not redundant: the reachable set is not convex, so two good
+endpoints do not imply a good line between them.
+
+**The standoff is measured, not demanded, and it is what sets the near edge.** A
+fixed 80 mm rules out every target inside 0.263 m while the grasp itself solves
+from 0.164 m. The standoff pose is the grasp pulled back *along the tool axis*,
+which at phi ≈ 2.2 points up and **inward** — into the arm's inability to fold up
+tight. So it runs out before the grasp does, and the unsolvable target is the one
+too *close*, which is the opposite of what "cannot reach" suggests.
+
+**Candidates are ranked, not taken first-fit.** The score is the tightest joint's
+distance from its limit (`_joint_margin`), then the standoff, then the object's
+preferred grip height, then the configured pitch — the last two as tie-breaks
+among postures that are already comfortable. Both leading terms are quantised
+(`MARGIN_ENOUGH`, `STANDOFF_ENOUGH`), so a difference smaller than the arm's own
+backlash cannot walk the grip height off the value proven on hardware.
+
+Only the ranked survivors cost a `/check_state_validity` call, at most
+`MAX_STATE_CHECKS` of them, and each is checked **with the jaws at
+`jaw_angle_for(width)`**.
 
 Then `_reachable_lift` measures how far straight up the tool can actually go —
 another lookup-by-measurement rather than a fixed 100 mm, because at a steep
-pitch the reachable band in z is only a few centimetres deep.
+pitch the reachable band in z is only a few centimetres deep. **It is reported,
+never required.** Gating on it would reject good grasps for a step that is not
+load-bearing: interpolating from the grasp to `carry` raises the can
+monotonically, +27 mm of base height in the first tenth of the move and never a
+dip, measured at x = 0.19, 0.20 and 0.24. Step 10 clears the floor on its own.
 
 **3. Add to the scene** — after the search, before the `plan_only` branch. Not
 earlier or the search rejects everything; not later or `--plan-only` checks its
@@ -302,8 +326,10 @@ one, else `DEFAULT_SQUEEZE`.
 again — the attached object's `touch_links` now cover finger contact, and leaving
 the allowance would let the object pass through the fingers after it's put down.
 
-**10. `cartesian_move` straight up** by the measured lift, then
-**`move_named('carry')`**.
+**10. `cartesian_move` straight up** by the measured lift — which may be zero —
+then **`move_named('carry')`**, which is what actually gets the object clear of
+the floor. The Cartesian lift is the *controlled* first few centimetres, not the
+clearing move; see step 2.
 
 `place()`: `over_trash` → open → detach + remove → `carry`.
 

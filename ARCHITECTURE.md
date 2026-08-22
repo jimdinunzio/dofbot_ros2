@@ -5,7 +5,7 @@ does, where the load-bearing decisions live, and which numbers are measured
 versus derived. It is not API documentation — the modules carry that in their
 docstrings, and those docstrings are the primary source. This is the map.
 
-Last verified against the tree on 2026-08-05: 87 tests pass, 3 skipped.
+Last verified against the tree on 2026-08-19: 110 tests pass, 3 skipped.
 
 ---
 
@@ -104,20 +104,49 @@ Corollary: never collision-check the *commanded* squeeze angle. The object stops
 the jaws at its own width, so `grip_angle_for()` is a pose the gripper never
 occupies while holding something. Check `jaw_angle_for(width)`.
 
-### 3. The pitch sweep
+### 3. The approach sweep
 
 The feasible band of phi for a given target is narrow — sometimes 0.02 rad — and
 it moves with reach. So `_feasible_approach` sweeps phi from `pi/2` to `pi` in
-0.01 rad steps, ordered nearest-first to the configured `grasp_pitch`, screening
-each candidate with analytic IK (free, microseconds) before spending a
-`/check_state_validity` call on the survivors.
+0.01 rad steps, screening each candidate with analytic IK (free, microseconds)
+before spending a `/check_state_validity` call on the survivors.
 
 The step size is not over-caution: a 0.05 step straddled a real 0.02-wide band
 and reported "no workable approach" for a pose the arm reaches comfortably.
 
-Same shape appears twice more — `_reachable_lift` measures how far straight up
-the tool can actually go, and `ik_best` tries both elbow branches and keeps the
-one nearest the seed.
+**It chooses three things.** Along with phi it picks the *grip height*, from
+whatever band the catalogue entry allows, and the *standoff* — how long the final
+straight-line approach is. Both are measured rather than demanded, the same shape
+as `_reachable_lift`, which measures how far straight up the tool can actually
+go. (`ik_best` is the third instance: it tries both elbow branches and keeps the
+one nearest the seed.)
+
+**The standoff is what sets the near edge, not the reach.** The grasp alone
+solves from 0.164 m out; demanding a full 80 mm standoff at the same pitch walls
+off everything inside 0.263 m. The reason is not obvious: the standoff pose is
+the grasp pulled *back along the tool axis*, and at phi ≈ 2.2 that direction is
+up and **inward**, into the same fold-up limit. So the standoff runs out before
+the grasp does, and the target that will not solve is the one too **close**.
+Measured, the can's band is 0.20–0.38 m and the near edge is set by the
+`min_standoff` floor — a policy choice about how short an approach is acceptable,
+since that final straight line is what makes the jaws slide over the object
+instead of swinging into it.
+
+**Ranked, not first-fit.** Candidates are scored on how much room the tightest
+joint has left (`_joint_margin`) and on the standoff they support, because near
+the inner edge "solvable" and "workable" come apart: solutions there sit hard
+against a stop, with nothing left to absorb the error in where the object really
+is. Both quantities are quantised, so that a difference smaller than the arm's
+own backlash cannot outvote the grip height proven on hardware. `grasp_pitch` is
+a tie-break among comfortable postures, not a starting point; at 2.2 it sits in
+the 2.05–2.35 band a floor pick actually uses.
+
+**The lift is measured and reported, never required.** It is not what gets the
+object clear of the floor: interpolating from the grasp to `carry` raises the can
+monotonically — measured at x = 0.19, 0.20 and 0.24, the can's base gains 27 mm
+in the first tenth of that move and never dips. `move_named('carry')` does the
+clearing; the Cartesian lift is only the safest *first* few centimetres, worth
+taking when available and not worth failing a pick over.
 
 ---
 
