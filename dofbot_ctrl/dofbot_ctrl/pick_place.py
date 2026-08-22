@@ -18,40 +18,45 @@ Pick and place, driven by coordinates rather than by RViz.
 
 `pick(x, y, z)` is the whole point of this file, and the seam the perception
 layer will attach to. (x, y, z) is the CENTRE of the object in base_link -- so
-for something resting on the floor, z is half the catalogue height, NOT 0. A
+for something resting on the floor, z is somewhere within thecatalogue height, NOT 0. A
 depth camera returns a point on the near surface, so whoever calls this steps
 along the view ray by the object radius first -- deliberately, once, in the
-caller, instead of Yahboom's blind +0.02/+0.01/+0.01 fudge constants which
-partly encode that correction and partly encode calibration error.
+caller.
 
 SEQUENCE
 --------
     add the object to the planning scene, and draw its mesh
     move_named('ready') + open_gripper
     move_pose  to a pre-grasp standoff back along the tool axis  (OMPL plans it)
+               -- as long a standoff as the arm has room for, measured
     cartesian_move straight in to the grasp                      (we plan it)
     close_gripper to the object's grasp width
     attach, with every end-effector link named as a touch link
-    cartesian_move straight up, clear of the floor
-    move_named('carry')
+    cartesian_move straight up, as far as the arm has room for (may be nothing)
+    move_named('carry')       -- THIS is what clears the floor; see min_lift
 
 then place(): over_trash -> open -> detach + remove -> carry.
 
-GRASP PITCH
------------
-phi is the tool tilt from vertical (see dofbot_kinematics): 0 is straight up,
-pi is straight down. It is a parameter because the right value depends on the
-object and where it sits, and the reachable band is narrow -- at a grasp point
-on the floor, only phi in roughly 2.4-3.0 works at all, and only part of that
-leaves room for an 80 mm straight-line approach.
+WHAT _feasible_approach ACTUALLY CHOOSES
+----------------------------------------
+Three things, not one:
 
-The vendor numbers do NOT transfer as-is, and this is why: theirs is the angle
-between the tool and the TABLE, ours is measured from vertical, and their IK
-solves to the arm5 rotation centre rather than the TCP. `pitch = 1.04` in the
-nano code and `1.3963` in the Pro's grasp_desktop.py are therefore not phi
-values. The default here was derived from our own reach instead -- see
-_feasible_approach, which sweeps outward from the configured pitch and reports
-which one it used, so tuning on hardware is a matter of reading the log.
+    phi           tool tilt from vertical (see dofbot_kinematics): 0 straight
+                  up, pi straight down. Swept pitch_min..pitch_max
+    grasp_height  where up the object the jaws close, within the band the
+                  catalogue entry allows. Most objects offer no band at all
+    standoff      how long the final straight-line approach is -- MEASURED,
+                  not demanded
+
+Candidates are RANKED, on how much room the tightest joint has left and on the
+standoff they support, rather than taken first-fit. Near the inner edge of the
+working ring that distinction is the whole game: solutions there exist but sit
+hard against a joint stop, with nothing left to absorb the error in where the
+object really is. grasp_pitch is a tie-break among comfortable postures, not a
+starting point.
+
+For a can on the floor the working band is phi 2.05..2.35, which is why the
+default is 2.2.
 
 HOVER: THE TCP IS NOT WHERE THE JAWS GRIP
 ----------------------------------------
@@ -70,16 +75,7 @@ front face and then a back stop, and where on that face the object lands is a
 separate question from how far the TCP is held off. gripper.throat_offset_for()
 answers it, and HALF THE OBJECT IS BEHIND THE CONTACT LINE is the term to keep
 hold of: the faces touch a round object at its widest point, so a can aimed at
-the fingertip already fills 33 of the 40 mm and only 7 mm is going spare. Forget
-that and "use the whole face" reads as a 40 mm advance, which drove the arm
-35 mm too deep. The derivation lives there; do not re-do it here.
-
-WHAT THIS DID NOT FIX. All of the above was written chasing a can that would not
-stay in the jaws, and the actual fault was the grip HEIGHT -- 45 mm up a 122 mm
-can, since raised to 80 mm, which is what made the pick work. The depth model
-stands on its own geometry and earns its place for narrower objects, but it was
-not the bug, and at the current gripper.BACK_STOP_CLEARANCE it does nothing for
-the can at all. Rule out grasp_height before concluding anything about the jaws.
+the fingertip already fills 33 of the 40 mm and only 7 mm is going spare. 
 
 Which gripper is fitted is set by DOFBOT_GRIPPER, and dofbot.urdf reads the same
 variable. Nothing in this file needs to know which one it is, but if those two
@@ -105,18 +101,28 @@ it spends -- the same mechanism as the gripper swap, just driven by where on the
 finger the object sits rather than by how long the finger is. The can spends
 NOTHING at the current gripper.BACK_STOP_CLEARANCE (its advance clamps to zero,
 see gripper.throat_offset_for), so the second row is both the fingertip figure
-and the live one. Lower that clearance and the band moves in with it: at a 2 mm
-clearance the can advances 5 mm and the band was swept at 0.257 .. 0.345.
+and the live one. 
 
-The near edge is the one that bites: a can comfortably reachable on the stock
-jaws can be unreachable at ANY pitch with the extensions on. When a grasp will
-not solve, the fix is usually to move the base FURTHER AWAY, which is the
-opposite of the instinct. _feasible_approach reports the pitches it tried, so
+THE HOVER IS NOT WHAT SETS THE NEAR EDGE, though. Both rows above are swept with
+the standoff held at a fixed 80 mm, and that is what binds, not the reach: the
+GRASP alone solves from x = 0.164 m. The standoff pose is the grasp pulled back
+along the tool axis, and at phi ~ 2.2 that direction is up and INWARD, into the
+same fold-up limit, so it runs out first and takes 6 cm of near reach with it.
+_reachable_standoff measures it instead, which puts the extended-finger band at
+0.20 .. 0.38 m with the near edge set by the min_standoff floor.
+
+The near edge is still the one that bites: a can comfortably reachable on the
+stock jaws can be unreachable at ANY pitch with the extensions on. When a grasp
+will not solve, the fix is usually to move the base FURTHER AWAY, which is the
+opposite of the instinct. _feasible_approach names the stage that ran out, so
 the log tells you which edge you are against.
 
-grasp_height is not sensitive over that sweep; the band barely moves across the
-usable range of grip heights. (Reachability only. Whether a tall can fouls the
-wrist once attached is a collision question, and only move_group answers it.)
+grasp_height barely moves the band -- a few millimetres across the whole usable
+range -- but it does move the POSTURE, and near the inner edge that is the
+difference between a solution with joint room to spare and one against a stop.
+Hence graspable.grasp_heights: reachability is not what the height is being
+traded for. (Whether a tall can fouls the wrist once attached is a collision
+question, and only move_group answers it.)
 
 Related, and the same mistake in a different place: never collision-check the
 COMMANDED jaw angle. obj.grip_angle() deliberately asks for narrower than the
@@ -127,6 +133,7 @@ holding anything. Check jaw_angle_for(width).
 
 import argparse
 import sys
+from dataclasses import replace
 from math import atan2, degrees, hypot, pi
 
 import rclpy
@@ -138,6 +145,38 @@ from dofbot_ctrl import graspable, gripper, scene_markers, scene_objects
 from dofbot_ctrl.moveit_client import (GRIPPER_LINKS, NAMED_STATES,
                                        DofbotMoveIt, MoveItError)
 
+# How an approach is scored, and both halves are "enough is enough". Past
+# MARGIN_ENOUGH the posture has joint room to spare; past STANDOFF_ENOUGH the
+# straight-line approach is as long as it needs to be. Beyond either, more is
+# not better, and the tie-breaks hand the choice back to the grip height and
+# pitch that are known to work on hardware.
+#
+# QUANTISED, because both are measured against a machine with backlash. The
+# steps are the smallest difference in each quantity that means anything: below
+# them, a raw comparison lets sixth-of-a-degree noise outvote a real preference.
+MARGIN_ENOUGH, MARGIN_STEP = 0.10, 0.02        # rad clear of the nearest stop
+STANDOFF_ENOUGH, STANDOFF_STEP = 0.040, 0.010  # m of straight-line approach
+
+# A cap on /check_state_validity round trips per pick. The IK screen is free and
+# leaves hundreds of survivors ranked by score; the collision check is a service
+# call. Ten is generous -- a correctly cleared scene passes on the first -- and
+# the cap is what keeps a scene left full of stale objects from hammering
+# move_group through the whole ranking.
+MAX_STATE_CHECKS = 10
+
+
+def _joint_margin(joints):
+    """How many radians the TIGHTEST joint has left before its own limit.
+
+    The arm reaches its inner working edge by folding up, so near that edge
+    every solution sits against a stop.
+
+    Read from kin.JOINT_LIMITS per joint, never a symmetric constant: arm1's
+    range is both wider and asymmetric.
+    """
+    return min(min(q - lo, hi - q)
+               for q, (lo, hi) in zip(joints, kin.JOINT_LIMITS))
+
 
 class PickPlace(Node):
 
@@ -145,12 +184,26 @@ class PickPlace(Node):
         super().__init__('pick_place')
 
         self.declare_parameter('object', 'soda_can')
+        # The standoff WANTED; _reachable_standoff takes as much of it as the
+        # arm has room for.
         self.declare_parameter('standoff', 0.08)      # pre-grasp, m along tool
-        self.declare_parameter('grasp_pitch', 2.6)    # phi, rad from vertical
+        # ...and the shortest approach worth making. The last leg is a straight
+        # line along the tool axis so the open jaws SLIDE OVER the object rather
+        # than swinging into it, and an approach no longer than the error in the
+        # object's position does not do that. Lowering this floor buys near
+        # reach and spends the only thing that stops the jaws knocking the can
+        # over: 10 mm reaches x = 0.19, 20 mm reaches x = 0.20.
+        self.declare_parameter('min_standoff', 0.02)
+        self.declare_parameter('standoff_step', 0.005)
+        # phi, rad from vertical. A tie-break among comfortable postures, not a
+        # starting point. 2.2 is the middle of where the can actually gets
+        # picked: swept across 0.20..0.35 m the working band is 2.05..2.32 and
+        # nothing solves above about 2.34.
+        self.declare_parameter('grasp_pitch', 2.2)
         # Sweep the whole range that can reach DOWN onto a supported object:
         # pi/2 is a horizontal tool, pi is straight down. Anything shallower
         # points the tool upwards and cannot grasp something standing on a
-        # surface. Candidates are tried nearest-to-grasp_pitch first.
+        # surface.
         self.declare_parameter('pitch_min', pi / 2.0)
         self.declare_parameter('pitch_max', pi)
         # Must be fine enough not to step OVER the feasible band. At a
@@ -160,8 +213,25 @@ class PickPlace(Node):
         # nearly free: candidates are screened by analytic IK first, and only
         # survivors cost a /check_state_validity round trip.
         self.declare_parameter('pitch_step', 0.01)
+        # How finely the grip height is traded. See graspable.grasp_heights --
+        # most objects offer no range at all and this does nothing.
+        self.declare_parameter('grasp_height_step', 0.005)
         self.declare_parameter('lift', 0.10)          # straight-up retreat, m
-        self.declare_parameter('min_lift', 0.03)      # enough to clear the floor
+        # ADVISORY, NOT A GATE -- below this the pick proceeds and says so.
+        # The lift is not what gets the object clear of the floor:
+        # move_named('carry') raises it MONOTONICALLY from the grasp, measured
+        # at x = 0.19, 0.20 and 0.24 as +27 mm of base height in the first tenth
+        # of that move with no dip. The Cartesian lift is only the safest FIRST
+        # few centimetres, worth taking when available.
+        self.declare_parameter('min_lift', 0.03)
+        # How much room the tightest joint should have left, radians. Advisory,
+        # but the number to watch: the arm reaches both edges of its working
+        # ring by running out of joint, so near either edge every solution sits
+        # against a stop. 0.02 rad is about a degree, roughly one servo step.
+        # Under it the pose is geometrically valid and practically unusable --
+        # there is nothing left
+        # to absorb the error in where the object actually is.
+        self.declare_parameter('min_margin', 0.02)
 
         self.mc = DofbotMoveIt(self)
         # Cosmetic only. Every call below sits next to the scene_objects call it
@@ -195,6 +265,33 @@ class PickPlace(Node):
             d += step
         return best
 
+    def _reachable_standoff(self, contact, grasp, phi, hover, want, floor,
+                            step=0.005):
+        """The longest pre-grasp standoff that solves, at most `want`.
+
+        Returns (standoff, pre_grasp, margin), or None if not even `floor`
+        fits. `margin` is the tightest joint margin across the pre-grasp pose
+        and the midpoint between it and the grasp -- the midpoint is not
+        redundant, because the reachable set is not convex and two good
+        endpoints do not imply a good line between them.
+
+        Measured, not assumed -- the same shape as _reachable_lift above, for
+        the same reason. It is not a collision search: see the warning on
+        gripper.throat_offset_for. What it measures is where the arm runs out of
+        joint, which is a fact about the arm and does not move when the scene
+        does.
+        """
+        d = want
+        while d >= floor - 1e-9:
+            pre = scene_objects.back_off(contact, phi, hover + d) + (phi,)
+            mid = tuple((a + b) / 2.0
+                        for a, b in zip(pre[:3], grasp[:3])) + (phi,)
+            j_pre, j_mid = kin.ik_best(*pre), kin.ik_best(*mid)
+            if j_pre is not None and j_mid is not None:
+                return d, pre, min(_joint_margin(j_pre), _joint_margin(j_mid))
+            d -= step
+        return None
+
     def _hover(self, obj):
         """How far back along the tool axis the TCP sits from the grasp point.
 
@@ -222,71 +319,140 @@ class PickPlace(Node):
         return gripper.throat_offset_for(obj.grasp_width)
 
     def _feasible_approach(self, obj, x, y, z):
-        """Choose a grasp pitch and hover that support the whole sequence.
+        """Choose a grip height, grasp pitch and standoff for the whole sequence.
 
-        Returns (phi, pre_grasp, grasp, lift, hover) -- poses as (x, y, z, phi),
-        distances in metres. `grasp` is the TCP target, already backed off from
-        the contact point by `hover`.
+        Returns (phi, pre_grasp, grasp, lift, hover, grasp_height) -- poses as
+        (x, y, z, phi), distances in metres. `grasp` is the TCP target, already
+        backed off from the contact point by `hover`. The caller must carry
+        `grasp_height` forward, because it is not necessarily the object's
+        nominal one and everything downstream measures from it.
 
-        Starts at the configured pitch and works outwards, because the feasible
-        band at floor level is only a few tenths of a radian wide and shifts
-        with the object's radius and grip height. Each candidate is checked at
-        the standoff, the grasp, the MIDPOINT between them, and for enough
-        straight-up travel to clear the floor. The midpoint is not redundant:
-        the reachable set is not convex, so two good endpoints do not imply a
-        good line between them.
+        THREE THINGS ARE BEING CHOSEN, not one, and only the first is obvious:
+
+          phi           the tool tilt, swept pitch_min..pitch_max
+          grasp_height  where up the object the jaws close, from
+                        obj.grasp_heights() -- usually a single value
+          standoff      how long the final straight-line approach is, measured
+                        by _reachable_standoff rather than demanded
+
+        RANKED, NOT FIRST-MATCH, because near the inner edge of the working
+        ring "solvable" and "workable" come apart: solutions there sit hard
+        against a joint stop, with no room to approach along a line, no room to
+        lift, and nothing left to absorb the error in where the object actually
+        is. Candidates are scored on _joint_margin and on the standoff they
+        support, both quantised (see MARGIN_ENOUGH), so once a posture is
+        comfortable the tie-breaks return the choice to the preferred grip
+        height and pitch.
+
+        The IK screen is free, so every candidate gets one. Only the ranked
+        survivors cost a /check_state_validity round trip, and only
+        MAX_STATE_CHECKS of them.
 
         The grasp is checked with the jaws at jaw_angle_for(grasp_width), NOT at
         the commanded squeeze angle: the object stops the jaws where it is wide,
         so the squeeze angle is a pose the gripper never occupies while holding
         anything, and checking it rejects perfectly good grasps.
+
+        The lift is measured and reported but NOT required -- see the min_lift
+        parameter for why the move to 'carry' is what clears the floor.
         """
         preferred = float(self.get_parameter('grasp_pitch').value)
         lo = float(self.get_parameter('pitch_min').value)
         hi = float(self.get_parameter('pitch_max').value)
         step = float(self.get_parameter('pitch_step').value)
         standoff = float(self.get_parameter('standoff').value)
+        min_standoff = float(self.get_parameter('min_standoff').value)
+        standoff_step = float(self.get_parameter('standoff_step').value)
+        height_step = float(self.get_parameter('grasp_height_step').value)
         want_lift = float(self.get_parameter('lift').value)
         min_lift = float(self.get_parameter('min_lift').value)
+        min_margin = float(self.get_parameter('min_margin').value)
         grip = gripper.jaw_angle_for(obj.grasp_width)
-
-        # The whole range, tried nearest the preferred pitch first, so a target
-        # that works at 2.6 still gets 2.6 and one that only works at 2.33 gets
-        # found instead of being reported unreachable.
-        n = int(round((hi - lo) / step))
-        candidates = sorted((lo + i * step for i in range(n + 1)),
-                            key=lambda p: abs(p - preferred))
-
-        contact = scene_objects.grasp_point(obj, x, y, z)
         hover = self._hover(obj)
-        why = {}
-        for phi in candidates:
-            grasp = scene_objects.back_off(contact, phi, hover) + (phi,)
-            pre = scene_objects.back_off(contact, phi, hover + standoff) + (phi,)
-            mid = tuple((a + b) / 2.0 for a, b in zip(pre[:3], grasp[:3])) + (phi,)
-            bad = next((p for p in (grasp, pre, mid)
-                        if kin.ik_best(*p) is None), None)
-            if bad is not None:
-                why[round(phi, 3)] = kin.describe(*bad)
-                continue
-            # Check the grasp with the jaws where the OBJECT stops them, not at
-            # the commanded squeeze angle -- see the docstring.
-            valid, contacts = self.mc.check_state(kin.ik_best(*grasp), grip)
+
+        n = int(round((hi - lo) / step))
+        pitches = [lo + i * step for i in range(n + 1)]
+        heights = obj.grasp_heights(height_step)
+
+        scored = []
+        solved_grasp = []       # (height, phi) that got that far, for diagnosis
+        for height in heights:
+            at_height = replace(obj, grasp_height=height)
+            contact = scene_objects.grasp_point(at_height, x, y, z)
+            for phi in pitches:
+                grasp = scene_objects.back_off(contact, phi, hover) + (phi,)
+                j_grasp = kin.ik_best(*grasp)
+                if j_grasp is None:
+                    continue
+                solved_grasp.append((height, phi, contact, grasp))
+                got = self._reachable_standoff(contact, grasp, phi, hover,
+                                               standoff, min_standoff,
+                                               standoff_step)
+                if got is None:
+                    continue
+                reach, pre, margin = got
+                margin = min(margin, _joint_margin(j_grasp))
+                lift = self._reachable_lift(grasp, want_lift)
+                # The epsilon is not decoration: a margin landing exactly on
+                # MARGIN_ENOUGH divides to 4.9999999 and would bucket one step
+                # low, handing the choice to a candidate no better than it.
+                # Boundary values belong in the bucket above.
+                key = (int((min(margin, MARGIN_ENOUGH) + 1e-9) / MARGIN_STEP),
+                       int((min(reach, STANDOFF_ENOUGH) + 1e-9) / STANDOFF_STEP),
+                       -round(abs(height - obj.grasp_height), 6),
+                       -round(abs(phi - preferred), 6))
+                scored.append((key, height, phi, pre, grasp, lift, reach,
+                               margin, j_grasp))
+        scored.sort(key=lambda c: c[0], reverse=True)
+
+        why = []
+        for cand in scored[:MAX_STATE_CHECKS]:
+            _, height, phi, pre, grasp, lift, reach, margin, j_grasp = cand
+            valid, contacts = self.mc.check_state(j_grasp, grip)
             if not valid:
-                why[round(phi, 3)] = 'at the grasp: %s' % contacts
+                why.append('phi=%.2f grip height %.0f mm: %s'
+                           % (phi, height * 1e3, contacts))
                 continue
-            lift = self._reachable_lift(grasp, want_lift)
+            if height != obj.grasp_height:
+                # Says "scored better", not "does not work": the preferred
+                # height is a tie-break, so it may well have solved and simply
+                # come second. Worth a warning either way, because the height is
+                # the one number here that was proven on hardware.
+                self.get_logger().warn(
+                    'gripping %.0f mm up rather than the usual %.0f: it scored '
+                    'better here, and %s allows %.0f..%.0f'
+                    % (height * 1e3, obj.grasp_height * 1e3, obj.name,
+                       obj.grasp_height_range[0] * 1e3,
+                       obj.grasp_height_range[1] * 1e3))
+            # One line with every number the choice was made on. phi and the
+            # standoff are NOT warned about when they come in short of what was
+            # asked for -- the pitch is a tie-break and the standoff is measured
+            # by design, so a warning on either fires on nearly every pick and
+            # means nothing. The warnings below are the ones to act on.
+            self.get_logger().info(
+                'approach: phi=%.2f (asked %.2f), grip %.0f mm up the object, '
+                '%.0f mm straight-line approach (wanted %.0f), %.0f mm lift, '
+                'tightest joint %.3f rad off its stop'
+                % (phi, preferred, height * 1e3, reach * 1e3, standoff * 1e3,
+                   lift * 1e3, margin))
+            if reach <= min_standoff + 1e-9:
+                self.get_logger().warn(
+                    'the straight-line approach is down to its %.0f mm floor. '
+                    'The jaws barely slide over the object before closing, so '
+                    'an error in where it actually is has nothing to absorb it '
+                    '-- this target is at the arm\'s inner edge'
+                    % (min_standoff * 1e3))
+            if margin < min_margin:
+                self.get_logger().warn(
+                    'this posture is %.3f rad off a joint stop, under the '
+                    '%.3f rad worth having. It solves, but there is no room '
+                    'left for pose error and the servo may already be against '
+                    'its limit' % (margin, min_margin))
             if lift < min_lift:
-                why[round(phi, 3)] = ('only %.0f mm of straight-up lift, need '
-                                      '%.0f' % (lift * 1e3, min_lift * 1e3))
-                continue
-            if phi != preferred:
                 self.get_logger().warn(
-                    'grasp_pitch %.2f does not work here; using %.2f rad'
-                    % (preferred, phi))
-            if lift < want_lift:
-                self.get_logger().warn(
-                    'lift limited to %.0f mm by reach (wanted %.0f)'
+                    'only %.0f mm of straight-up lift here (wanted %.0f). Not '
+                    'fatal -- the move to carry raises the object on its own -- '
+                    'but the first centimetres are not the controlled ones'
                     % (lift * 1e3, want_lift * 1e3))
             # Half the object is behind the contact line, so how far it reaches
             # into the finger is that half PLUS whatever the advance was. Worth
@@ -302,37 +468,71 @@ class PickPlace(Node):
                    '%.0f' % (gripper.FINGER_DEPTH * 1e3)
                    if gripper.FINGER_DEPTH is not None else 'an unmeasured',
                    obj.grasp_width))
-            return phi, pre, grasp, lift, hover
+            return phi, pre, grasp, lift, hover, height
 
-        # Say whether this is a reach problem or a posture problem, because the
-        # two want opposite responses: drive closer, versus try another pitch.
+        raise MoveItError(
+            'no workable approach to (%.3f, %.3f, %.3f) for %s: %s (swept phi '
+            '%.2f..%.2f in %.3f rad steps and grip height %s, %d candidates)'
+            % (x, y, z, obj.name,
+               self._why_not(obj, x, y, z, solved_grasp, scored, why,
+                             hover, min_standoff, standoff_step, preferred),
+               lo, hi, step,
+               '%.0f..%.0f mm' % (min(heights) * 1e3, max(heights) * 1e3)
+               if len(heights) > 1 else '%.0f mm' % (heights[0] * 1e3),
+               len(pitches) * len(heights)))
+
+    def _why_not(self, obj, x, y, z, solved_grasp, scored, why, hover,
+                 min_standoff, standoff_step, preferred):
+        """Name the stage that actually failed, in the order the sweep hit them."""
         limits = kin.reach_limits()
+        contact = scene_objects.grasp_point(obj, x, y, z)
         span = hypot(hypot(contact[0], contact[1]), contact[2] - kin.Z0)
         bearing = degrees(atan2(contact[1], contact[0]))
         yaw_lo, yaw_hi = (degrees(a) for a in limits['yaw_range'])
-        if span > limits['max_reach_from_shoulder']:
-            reason = ('the grasp point is %.3f m from the shoulder, past the '
-                      '%.3f m the arm can span -- move the base closer'
-                      % (span, limits['max_reach_from_shoulder']))
-        elif not yaw_lo <= bearing <= yaw_hi:
-            reason = ('bearing %.0f deg is outside arm1_Joint\'s %.0f..%.0f deg '
-                      'sector -- turn the base' % (bearing, yaw_lo, yaw_hi))
-        else:
-            # candidates[0] is the pitch NEAREST the preferred one, which is
-            # not the preferred one itself: the sweep walks lo + i*step, and
-            # nothing lands exactly on 2.6. Looking up `preferred` therefore
-            # always missed and printed '?', which is the least useful thing
-            # this message could say -- the whole point of `why` is to name the
-            # obstruction. Report the candidate actually tried.
-            closest = candidates[0]
-            reason = ('within reach (%.3f m of %.3f, bearing %.0f deg) but no '
-                      'posture works. Nearest attempt, phi=%.2f: %s'
-                      % (span, limits['max_reach_from_shoulder'], bearing,
-                         closest, why.get(round(closest, 3), '?')))
-        raise MoveItError(
-            'no workable approach to (%.3f, %.3f, %.3f) for %s: %s '
-            '(swept phi %.2f..%.2f in %.3f rad steps, %d candidates)'
-            % (x, y, z, obj.name, reason, lo, hi, step, len(candidates)))
+
+        if not solved_grasp:
+            # Nothing struck the grasp at all: a reach or a bearing problem,
+            # and those want opposite responses -- drive closer, versus turn.
+            if span > limits['max_reach_from_shoulder']:
+                return ('the grasp point is %.3f m from the shoulder, past the '
+                        '%.3f m the arm can span -- move the base closer'
+                        % (span, limits['max_reach_from_shoulder']))
+            if not yaw_lo <= bearing <= yaw_hi:
+                return ('bearing %.0f deg is outside arm1_Joint\'s %.0f..%.0f '
+                        'deg sector -- turn the base' % (bearing, yaw_lo, yaw_hi))
+            return ('within reach (%.3f m of %.3f, bearing %.0f deg) but no '
+                    'pitch or grip height strikes the grasp at all: %s'
+                    % (span, limits['max_reach_from_shoulder'], bearing,
+                       kin.describe(*(scene_objects.back_off(
+                           contact, preferred, hover) + (preferred,)))))
+
+        if not scored:
+            # THE NEAR-EDGE CASE. The grasp solves; what does not is backing out
+            # of it along the tool axis to make a straight-line approach,
+            # because at these pitches that direction is up and inward, into the
+            # fold-up limit. Measure the approach again with the floor removed,
+            # so the report says how far short it fell and not merely that it
+            # did.
+            phis = [p for _h, p, _c, _g in solved_grasp]
+            hs = [h for h, _p, _c, _g in solved_grasp]
+            best = 0.0
+            for _h, phi, cont, grasp in solved_grasp:
+                got = self._reachable_standoff(cont, grasp, phi, hover,
+                                               min_standoff, standoff_step,
+                                               standoff_step)
+                if got is not None:
+                    best = max(best, got[0])
+            return ('the grasp solves (phi %.2f..%.2f, grip height '
+                    '%.0f..%.0f mm) but there is no room to back out of it for '
+                    'a straight-line approach: the longest that clears the '
+                    'joint limits is %.0f mm against the %.0f mm minimum. This '
+                    'is the arm folded up tight, so the target is too CLOSE -- '
+                    'move the base FURTHER AWAY.'
+                    % (min(phis), max(phis), min(hs) * 1e3, max(hs) * 1e3,
+                       best * 1e3, min_standoff * 1e3))
+
+        return ('%d approaches solve kinematically but the best %d all collide: '
+                '%s' % (len(scored), len(why), '; '.join(why) or 'no detail'))
 
     # ------------------------------------------------------------------- pick
 
@@ -382,14 +582,23 @@ class PickPlace(Node):
         """Pick the object whose CENTRE is at (x, y, z) in base_link."""
         obj = self._object(name)
         self._clear(obj)
-        phi, pre, grasp, lift, hover = self._feasible_approach(obj, x, y, z)
-        standoff = float(self.get_parameter('standoff').value)
+        phi, pre, grasp, lift, hover, height = self._feasible_approach(
+            obj, x, y, z)
+
+        # The sweep is allowed to move the grip height within the object's own
+        # band, and EVERYTHING DOWNSTREAM MEASURES FROM IT: the collision
+        # cylinder's placement, held_pose's centre offset, the drawn marker.
+        # Substituting it into the catalogue entry here means each of those
+        # keeps reading obj.grasp_height / obj.centre_offset() and cannot be
+        # left behind holding the nominal figure. Frozen dataclass, so replace()
+        # re-runs the validation rather than mutating past it.
+        obj = replace(obj, grasp_height=height)
 
         self.get_logger().info(
             'pick %s at (%.3f, %.3f, %.3f): grasp TCP (%.3f, %.3f, %.3f) '
-            'phi=%.2f, %.0f mm standoff, %s'
+            'phi=%.2f, gripping %.0f mm up the object, %s'
             % (obj.name, x, y, z, grasp[0], grasp[1], grasp[2], phi,
-               standoff * 1e3, gripper.describe(obj.grasp_width)))
+               height * 1e3, gripper.describe(obj.grasp_width)))
 
         # Into the scene AFTER the approach search but BEFORE the plan_only
         # branch, and both halves of that matter.
@@ -445,7 +654,18 @@ class PickPlace(Node):
         # through the fingers after it is put back down.
         self.mc.allow_collisions(obj.name, GRIPPER_LINKS, False)
 
-        self.mc.cartesian_move((grasp[0], grasp[1], grasp[2] + lift, phi))
+        # The lift is whatever the arm had room for, and at the edges of the
+        # working ring that can be nothing at all. Skip rather than command a
+        # zero-length straight line: plan_cartesian floors itself at two
+        # waypoints, so a zero move is a degenerate trajectory to the pose the
+        # arm is already in. move_named('carry') below is what clears the floor
+        # either way -- it raises the object monotonically from the grasp.
+        if lift > 0.0:
+            self.mc.cartesian_move((grasp[0], grasp[1], grasp[2] + lift, phi))
+        else:
+            self.get_logger().warn(
+                'no straight-up lift available from this grasp; going straight '
+                'to carry, which raises the object on its own')
         self.mc.move_named('carry')
         self.get_logger().info('picked %s' % obj.name)
         return obj
@@ -467,10 +687,11 @@ class PickPlace(Node):
             valid = self.mc.state_valid(joints, verbose=True)
             ok = ok and valid
             self.get_logger().info(
-                '%-10s (%.3f, %.3f, %.3f) phi=%.2f -> %s  %s'
+                '%-10s (%.3f, %.3f, %.3f) phi=%.2f -> %s  %s  (%.3f rad off '
+                'the nearest joint stop)'
                 % (label, pose[0], pose[1], pose[2], pose[3],
                    ['%.3f' % q for q in joints],
-                   'ok' if valid else 'IN COLLISION'))
+                   'ok' if valid else 'IN COLLISION', _joint_margin(joints)))
         held = scene_objects.held_pose(obj, phi, 0.0, hover)
         self.get_logger().info(
             'held pose in arm5_Link: (%.4f, %.4f, %.4f) quat (%.3f, %.3f, '
