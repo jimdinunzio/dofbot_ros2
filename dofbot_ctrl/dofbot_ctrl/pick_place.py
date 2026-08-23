@@ -15,6 +15,8 @@ Pick and place, driven by coordinates rather than by RViz.
     DOFBOT_GRIPPER=stock ros2 run dofbot_ctrl pick_place -- \
         --object test_block 0.22 0.0 0.015
     ros2 run dofbot_ctrl pick_place -- --check-states
+    # recover after a run that died partway: empty the scene, let go, go home
+    ros2 run dofbot_ctrl pick_place -- --reset
 
 `pick(x, y, z)` is the whole point of this file, and the seam the perception
 layer will attach to. (x, y, z) is the CENTRE of the object in base_link -- so
@@ -163,6 +165,10 @@ STANDOFF_ENOUGH, STANDOFF_STEP = 0.040, 0.010  # m of straight-line approach
 # the cap is what keeps a scene left full of stale objects from hammering
 # move_group through the whole ranking.
 MAX_STATE_CHECKS = 10
+
+# Scene objects reset() must leave alone: they are standing fixtures owned by
+# another node, not leftovers. Must match chassis_collision's `object_id`.
+SCENE_FIXTURES = ('robot_chassis',)
 
 
 def _joint_margin(joints):
@@ -714,6 +720,92 @@ class PickPlace(Node):
         self.mc.move_named('carry')
         self.get_logger().info('placed')
 
+    # ------------------------------------------------------------------ reset
+
+    def reset(self, state='ready', force=False):
+        """Recover from a run that died partway: clear, release, go home.
+
+        A failed pick leaves the arm wherever it stopped AND the object wherever
+        it got to in the planning scene -- attached to the gripper, if it died
+        after the grasp. THE NEXT RUN CANNOT UNDO THAT ON ITS OWN. _clear()
+        drops the stale copy, but the sequence then puts a fresh one back in the
+        same place and asks for 'ready' with the jaws still around it, which is
+        a START state in collision. move_group rejects the whole plan as
+        INVALID_MOTION_PLAN -- immediately, before OMPL is asked for anything,
+        which is what the near-instant failure tells you.
+
+        Hence the order here: scene first, jaws second, motion last. Planning
+        cannot get out of a hole the scene is holding it in.
+
+        Opening DROPS whatever is held, in place, before the arm moves. That is
+        deliberate -- the alternative is carrying the object to 'ready' with the
+        scene no longer holding it, and dropping it from up there instead.
+        """
+        if state not in NAMED_STATES:
+            raise MoveItError('unknown named state %r; have %s'
+                              % (state, sorted(NAMED_STATES)))
+
+        world, attached = self.mc.object_ids()
+        for name in attached:
+            self.get_logger().info('detaching %r' % name)
+            self.mc.detach(name)
+        if attached:
+            # Detaching puts them back into the WORLD, where remove() takes
+            # them; the list read above predates that.
+            world, _ = self.mc.object_ids()
+        for name in world:
+            if name in SCENE_FIXTURES:
+                continue
+            self.get_logger().info('removing %r' % name)
+            self.mc.remove(name)
+            # A run that died between allowing and forbidding leaves the pair
+            # allowed -- an object the gripper is permitted to pass straight
+            # through. Same repair _clear makes, for objects this process never
+            # knew about.
+            self.mc.allow_collisions(name, GRIPPER_LINKS, False)
+        self.markers.clear()
+        self.held = None
+
+        self.mc.open_gripper()
+
+        here = self.mc.current_joints()
+        valid, contacts = self.mc.check_state(here)
+        if not valid:
+            self.get_logger().warn(
+                'still in collision with the scene cleared: %s. No planned '
+                'move can start here; --force drives out blind.' % contacts)
+        try:
+            self.mc.move_named(state)
+        except MoveItError as exc:
+            if not force:
+                raise
+            self.get_logger().warn('%s -- forcing a blind move to %r'
+                                   % (exc, state))
+            self._blind_move(NAMED_STATES[state])
+        self.get_logger().info('reset to %r' % state)
+
+    def _blind_move(self, joints, steps=40):
+        """Joint-space interpolation to `joints`, NOT COLLISION CHECKED.
+
+        The escape hatch for a start state MoveIt will not plan out of. Every
+        planned move validates its own first waypoint against the live scene, so
+        a pose that really is in collision -- jaws in the floor, arm folded into
+        the chassis -- cannot be planned out of at all. It can only be driven
+        out of, which means going straight to the controller past move_group.
+
+        Every joint moves monotonically, so the path stays inside the box the
+        two endpoints span and is the shortest one between them. That is the
+        whole of the safety argument, and it says nothing about what is in that
+        box. Watch the arm, and have the power switch to hand.
+        """
+        here = self.mc.current_joints()
+        points = [[a + (b - a) * (i + 1) / steps
+                   for a, b in zip(here, joints)] for i in range(steps)]
+        times = self.mc.time_parameterize(points, start=here)
+        self.get_logger().warn('BLIND move over %.1f s, nothing checked'
+                               % times[-1])
+        self.mc.execute(points, times)
+
     # ---------------------------------------------------------------- utility
 
     def check_states(self):
@@ -753,6 +845,14 @@ def main(args=None):
                              'nothing; leaves the object in the scene and drawn')
     parser.add_argument('--check-states', action='store_true',
                         help='validate every named state and exit')
+    parser.add_argument('--reset', nargs='?', const='ready', default=None,
+                        metavar='STATE',
+                        help='recovery: empty the planning scene, open the '
+                             'gripper and move to STATE (default ready)')
+    parser.add_argument('--force', action='store_true',
+                        help='with --reset, drive out blind -- no collision '
+                             'checking -- if MoveIt will not plan from where '
+                             'the arm is')
     parser.add_argument('--no-place', action='store_true',
                         help='pick and carry, but do not go on to place')
     cli = parser.parse_args(remove_ros_args(sys.argv)[1:])
@@ -763,6 +863,8 @@ def main(args=None):
     try:
         if cli.check_states:
             status = 0 if node.check_states() else 1
+        elif cli.reset:
+            node.reset(cli.reset, force=cli.force)
         elif cli.x is None or cli.y is None or cli.z is None:
             parser.print_usage(sys.stderr)
             node.get_logger().error('give an object position: x y z (metres, '

@@ -312,6 +312,20 @@ class MeshMarkers:
                              scene_objects.held_pose(obj, phi, roll,
                                                      tip_offset))
 
+    def clear(self):
+        """Delete every marker on the topic, including another run's.
+
+        Marker ids are handed out per process, in first-drawn order, so a fresh
+        process cannot address what an earlier one drew: hide() would delete
+        whichever marker happens to share the id. DELETEALL needs no ids.
+        """
+        marker = Marker()
+        marker.ns = NAMESPACE
+        marker.action = Marker.DELETEALL
+        marker.header.frame_id = BASE_FRAME
+        self.pub.publish(marker)
+        return marker
+
     def hide(self, obj):
         """Remove `obj`'s marker."""
         if not obj.mesh:
