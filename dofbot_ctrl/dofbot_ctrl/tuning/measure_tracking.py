@@ -25,6 +25,7 @@ noise floor -- the arm tracks well, just late.
 
 import argparse
 import math
+import statistics
 import sys
 
 import rclpy
@@ -264,24 +265,53 @@ def report(commanded, measured, node=None):
 
 
 def _report_settled(commanded, measured):
-    """Error where the arm is PARKED. This is the grasp-relevant figure."""
-    print('\n%-12s %10s %10s %10s' % ('joint', 'peak', 'rms', 'samples'))
-    print('%-12s %10s %10s %10s' % ('(settled)', 'mrad', 'mrad', 'parked'))
-    worst = 0.0
+    """Error where the arm is PARKED. This is the grasp-relevant figure.
+
+    Split into bias and spread, because they have opposite fixes and the same
+    rms. A one-signed offset is the encoder and the command disagreeing about
+    where zero is -- joint_map's offsets were measured through the whole-degree
+    read, so they carry up to +-0.5 deg (8.7 mrad) of quantisation, which is the
+    same size as the errors here. Spread around that is the arm genuinely not
+    parking twice in the same place: deadband, backlash, or sag under load.
+
+    Only the first is worth recalibrating, and NOTHING should be trimmed
+    against a biased measurement.
+    """
+    print('\n%-12s %9s %9s %9s %9s' % ('joint', 'bias', 'spread', 'peak',
+                                        'samples'))
+    print('%-12s %9s %9s %9s %9s' % ('(settled)', 'mrad', 'mrad', 'mrad',
+                                     'parked'))
+    biases, spreads = [], []
     for joint in ARM_JOINT_NAMES:
         pairs = _settled(commanded, measured, joint)
         if not pairs:
-            print('%-12s %10s %10s %10d' % (joint, '--', '--', 0))
+            print('%-12s %9s %9s %9s %9d' % (joint, '--', '--', '--', 0))
             continue
         errs = [m - c for c, m in pairs]
-        peak = max(abs(e) for e in errs)
-        worst = max(worst, peak)
-        print('%-12s %10.1f %10.1f %10d'
-              % (joint, peak * 1000, _rms(errs) * 1000, len(pairs)))
-    if worst:
-        print('\nSettled error is what the jaws actually close at: a pick '
-              'grips after the\nmotion has stopped, so the mid-slew peak above '
-              'is not the number that decides\nwhether a grasp seats.')
+        bias = statistics.fmean(errs)
+        spread = statistics.pstdev(errs) if len(errs) > 1 else 0.0
+        biases.append(abs(bias))
+        spreads.append(spread)
+        print('%-12s %9.1f %9.1f %9.1f %9d'
+              % (joint, bias * 1000, spread * 1000,
+                 max(abs(e) for e in errs) * 1000, len(pairs)))
+
+    if not biases:
+        return
+    print('\nBias is a fixed offset; spread is failure to park twice the same '
+          'way.')
+    if max(biases) > 2.0 * max(spreads):
+        print('BIAS-DOMINATED -- this is a calibration disagreement, not the '
+              'arm missing.\nRe-run calibrate_zero: its offsets came from the '
+              'whole-degree read and are\nquantised to +-8.7 mrad, the same '
+              'size as these numbers.')
+    elif max(spreads) > 2.0 * max(biases):
+        print('SPREAD-DOMINATED -- the arm does not park twice in the same '
+              'place, so this is\ndeadband, backlash or sag. Recalibrating '
+              'zero will not touch it.')
+    else:
+        print('Mixed: some of each. Recalibrating zero addresses the bias '
+              'column only.')
 
 
 def _tcp_errors(commanded, measured, settled_only=False):
