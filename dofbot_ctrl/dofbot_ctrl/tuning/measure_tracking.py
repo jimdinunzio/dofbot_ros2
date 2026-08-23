@@ -267,51 +267,57 @@ def report(commanded, measured, node=None):
 def _report_settled(commanded, measured):
     """Error where the arm is PARKED. This is the grasp-relevant figure.
 
-    Split into bias and spread, because they have opposite fixes and the same
-    rms. A one-signed offset is the encoder and the command disagreeing about
-    where zero is -- joint_map's offsets were measured through the whole-degree
-    read, so they carry up to +-0.5 deg (8.7 mrad) of quantisation, which is the
-    same size as the errors here. Spread around that is the arm genuinely not
-    parking twice in the same place: deadband, backlash, or sag under load.
+    Split into bias and spread: same rms, different causes.
 
-    Only the first is worth recalibrating, and NOTHING should be trimmed
-    against a biased measurement.
+    BOTH ARE PHYSICAL. joint_map's zero offsets cannot appear here -- the
+    command goes out through urdf_to_servo and the reading comes back through
+    servo_to_urdf, both using the same _center(), so the offset cancels exactly
+    even when it is wrong. Nor is this the whole-degree read: /servo_states is
+    published from Arm_serial_servo_read6, which is float. The only
+    quantisation left is _angle_to_pos's int(), one raw count, 1.4 mrad.
+
+    So bias is the servo parking off the position it was given and staying
+    there -- deadband, static friction, or sag under load. Spread is it not
+    parking in the same place twice. Recalibrating zero addresses NEITHER.
     """
-    print('\n%-12s %9s %9s %9s %9s' % ('joint', 'bias', 'spread', 'peak',
-                                        'samples'))
-    print('%-12s %9s %9s %9s %9s' % ('(settled)', 'mrad', 'mrad', 'mrad',
-                                     'parked'))
-    biases, spreads = [], []
+    print('\n%-12s %9s %9s %9s %9s %9s'
+          % ('joint', 'bias', 'spread', 'peak', 'kind', 'samples'))
+    print('%-12s %9s %9s %9s %9s %9s'
+          % ('(settled)', 'mrad', 'mrad', 'mrad', '', 'parked'))
+    verdicts = {}
     for joint in ARM_JOINT_NAMES:
         pairs = _settled(commanded, measured, joint)
         if not pairs:
-            print('%-12s %9s %9s %9s %9d' % (joint, '--', '--', '--', 0))
+            print('%-12s %9s %9s %9s %9s %9d'
+                  % (joint, '--', '--', '--', '--', 0))
             continue
         errs = [m - c for c, m in pairs]
         bias = statistics.fmean(errs)
         spread = statistics.pstdev(errs) if len(errs) > 1 else 0.0
-        biases.append(abs(bias))
-        spreads.append(spread)
-        print('%-12s %9.1f %9.1f %9.1f %9d'
+        # Per joint, never pooled: comparing the largest bias on one joint
+        # against the largest spread on another compares two different joints
+        # and can call a clear split "mixed".
+        if abs(bias) > 2.0 * spread:
+            verdicts[joint] = 'offset'
+        elif spread > 2.0 * abs(bias):
+            verdicts[joint] = 'scatter'
+        else:
+            verdicts[joint] = 'both'
+        print('%-12s %9.1f %9.1f %9.1f %9s %9d'
               % (joint, bias * 1000, spread * 1000,
-                 max(abs(e) for e in errs) * 1000, len(pairs)))
+                 max(abs(e) for e in errs) * 1000, verdicts[joint],
+                 len(pairs)))
 
-    if not biases:
+    if not verdicts:
         return
-    print('\nBias is a fixed offset; spread is failure to park twice the same '
-          'way.')
-    if max(biases) > 2.0 * max(spreads):
-        print('BIAS-DOMINATED -- this is a calibration disagreement, not the '
-              'arm missing.\nRe-run calibrate_zero: its offsets came from the '
-              'whole-degree read and are\nquantised to +-8.7 mrad, the same '
-              'size as these numbers.')
-    elif max(spreads) > 2.0 * max(biases):
-        print('SPREAD-DOMINATED -- the arm does not park twice in the same '
-              'place, so this is\ndeadband, backlash or sag. Recalibrating '
-              'zero will not touch it.')
-    else:
-        print('Mixed: some of each. Recalibrating zero addresses the bias '
-              'column only.')
+    print('\n  offset   parks off the commanded angle and stays there: '
+          'deadband, friction,\n           or sag under load. Load-bearing '
+          'joints show this most.')
+    print('  scatter  does not park in the same place twice: backlash, or a '
+          'load that\n           varies with where the arm came from.')
+    print('\nNeither is a zero-offset error -- those cancel between '
+          'urdf_to_servo and\nservo_to_urdf, so calibrate_zero cannot move '
+          'these numbers.')
 
 
 def _tcp_errors(commanded, measured, settled_only=False):
