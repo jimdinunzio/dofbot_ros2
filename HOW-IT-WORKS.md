@@ -401,17 +401,29 @@ is one the real arm cannot follow; it lags and arrives late.
       │              │ /apply_planning_scene
       └──────────────┘ /move_action, follow_joint_trajectory, gripper_cmd
 
-   hardware:  /joint_states ──► moveit_bridge ──► servos   (write-only)
+   hardware:  /joint_states ──► moveit_bridge ──► servos
+              moveit_bridge ──► /servo_states     (encoder_rate > 0, default off)
               servos ──► joint_state_mirror ──► /joint_states  (read-only)
 ```
 
 The two hardware nodes are **mutually exclusive** — both want `/dev/ttyTHS1`, and
 pyserial takes no exclusive lock, so two owners interleave bytes and corrupt
-reads *silently*. Both now detect a rival on the port and name its PID.
+reads *silently*. Both now detect a rival on the port and name its PID, through
+the shared `serial_port.rival_warning`.
 
 Execution is **open-loop**: MoveIt believes the mock joints, not the encoders. A
-stalled or blocked servo goes undetected. Grasp-success detection via encoder
-read-back is deliberately deferred.
+stalled or blocked servo goes undetected.
+
+`moveit_bridge` can read the encoders back onto **`/servo_states`** — never onto
+`/joint_states`, because a second publisher there makes MoveIt's idea of the
+robot state flicker between two sources. Off by default (`encoder_rate: 0.0`),
+since reads and writes share one bus and one single-threaded executor.
+
+That topic exists so the disagreement can be measured. It is: the arm tracks the
+commanded path to within a few mrad but runs **~225 ms behind**, which is the
+bridge's own `track_time_ms`, not the hardware. The servos close their own
+position loops, so there is no missing control loop to add — see **Closing the
+loop, and why it is not needed** in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 

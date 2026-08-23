@@ -52,10 +52,18 @@ Hardware-facing, separate from the above:
 
 ```
 joint_state_mirror.py  reads servos -> /joint_states     (read-only, for RViz)
-moveit_bridge.py       /joint_states -> servos           (write-only, drives the arm)
+moveit_bridge.py       /joint_states -> servos           (drives the arm)
+serial_port.py         who else has /dev/ttyTHS1 open. Shared diagnostic.
 gui_teleop.py          manual jogging
 calibrate_zero.py      per-servo zero offsets by encoder read
 chassis_collision.py   SUPERSEDED — chassis/floor are real URDF links now
+```
+
+Measurement tools, both read-only:
+
+```
+measure_bus.py       servo-bus latency, sustained sweep rate, encoder noise floor
+measure_tracking.py  /joint_states vs /servo_states — how far behind the arm runs
 ```
 
 ---
@@ -332,7 +340,54 @@ bin off the left front with its rim below ~0.3 m.
   and the object does not sit on the gripper centreline — but `scene_objects`
   attaches it symmetrically, so a small pose error is carried into the place.
 - **Execution is open-loop.** MoveIt believes the mock joints, not the encoders.
-  A stalled or blocked servo goes undetected.
+  A stalled or blocked servo goes undetected. Whether to change that is an open
+  question, now being answered by measurement rather than by argument — see
+  [Closing the loop](#closing-the-loop-what-is-known-and-what-is-being-measured).
+
+---
+
+## Closing the loop, and why it is not needed
+
+**The servos already close their own loop.** Each YB-SD15M runs its own position
+controller; `_write_pos` hands it a target and a duration and it gets there and
+holds. There is no missing control loop — an outer ROS loop over a 12 ms serial
+sweep would be a slower cascade around a faster one, which adds lag, not
+authority. What making the encoders authoritative would buy is *state* and
+*fault detection*, not control.
+
+Measured 2026-08-22, all read-only, tools in `dofbot_ctrl/tuning/`:
+
+| | measured |
+|---|---|
+| Six-servo sweep | 12.2 ms → **82 Hz**, no drops in 400+ sweeps |
+| Per-joint poll ceiling | a servo re-queried inside **8–10 ms** does not answer |
+| Encoder noise at rest | **1 count = 0.082°** (servo 5: 2 counts) |
+| Tracking during a pick | **~225 ms lag**, residual 5.5–15.3 mrad |
+
+The bus is not a constraint. The per-joint gap is: a sweep faster than ~10 ms
+per servo starts dropping, so 82 Hz sits above a cliff rather than having
+headroom — 50 Hz is comfortable, 100 Hz is not.
+
+**The arm tracks well, just late.** Removing a single fitted delay drops RMS
+error from 72–110 mrad to 5.5–15.3 mrad, against a 1.4 mrad noise floor. The
+225 ms is our own tuning, not the hardware: the bridge writes at 10 Hz with
+`track_time_ms = 200`, so every write is superseded before the servo arrives.
+
+So closed loop is not the next move:
+
+- Encoders authoritative *today* would be **harmful** — `current_joints()` feeds
+  `cartesian_move`'s seed, and 225 ms stale means planning from where the arm was.
+- A JTC path tolerance would have to exceed 236 mrad (13.5°) not to abort every
+  trajectory, which detects nothing.
+- There is no torque or current feedback in the protocol (only 0x2A write
+  position, 0x38 read position, 0x28 torque enable, 0x05 set id), so a stall can
+  only ever be inferred from position error.
+- A real `SystemInterface` would have to reimplement the `grip_time_ms` special
+  case in C++, not retire it: re-commanding servo 6 every cycle is exactly what
+  makes a slow close snap shut.
+
+If the lag is ever worth cutting, that is a `track_time_ms` and write-rate
+question, and it helps whether or not the loop is ever closed.
 
 ---
 
