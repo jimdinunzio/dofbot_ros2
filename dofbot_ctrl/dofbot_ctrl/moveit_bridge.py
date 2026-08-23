@@ -48,17 +48,35 @@ Design, and why each piece is here:
 - Torque on at startup, so the servos can hold the commanded positions (a prior
   mirror/calibrate session may have left torque off).
 
+- Optional encoder read-back (`encoder_rate`, default 0 = off). This node is
+  the only one that may read the servos while it is running, because it owns
+  the port -- so if anything is ever to compare what was commanded against what
+  the arm did, it has to come from here. Readings go to /servo_states, NEVER to
+  /joint_states: a second publisher there makes MoveIt's idea of the robot
+  state flicker between two sources.
+
+  APPLIED LIVE, like grip_time_ms: a parameter that is silently not the value
+  in use is worse than no parameter. The publisher is always advertised and
+  only the timer comes and goes, so `ros2 topic info /servo_states`
+  distinguishes "switched off" from "no bridge running".
+
+  OFF by default: reads and writes share one bus, one lock and one
+  single-threaded executor, so a ~12ms sweep delays the write tick by that
+  much. At the 10Hz tick there is 100ms of budget per cycle.
+
 Owns /dev/ttyTHS1. Stop the mirror, gui_teleop, and calibrate_zero first --
 nothing else may hold the port.
 """
 
 import rclpy
 from rclpy.node import Node
+from rcl_interfaces.msg import SetParametersResult
 from sensor_msgs.msg import JointState
 
 from Arm_Lib import Arm_Device
 
-from dofbot_ctrl.joint_map import JOINT_NAMES, urdf_to_servo
+from dofbot_ctrl.joint_map import JOINT_NAMES, servo_to_urdf, urdf_to_servo
+from dofbot_ctrl.serial_port import rival_warning
 
 # A target within this many servo degrees of the last write counts as unchanged.
 _STEP_DEG = 0.5
@@ -97,10 +115,22 @@ class MoveItBridge(Node):
         # different move time entirely, wrapped.
         self.declare_parameter('grip_time_ms', 2000)   # gripper-only move time
 
+        # Hz to read the encoders back and publish them on /servo_states.
+        # 0 disables it entirely, which is the default: see the docstring for
+        # why this competes with the write tick for the bus.
+        self.declare_parameter('encoder_rate', 0.0)
+
         port = self.get_parameter('port').value
         rate = self.get_parameter('rate').value
         self.track_time = int(self.get_parameter('track_time_ms').value)
         self.sync_time = int(self.get_parameter('sync_time_ms').value)
+        encoder_rate = float(self.get_parameter('encoder_rate').value)
+
+        self.port = port
+        rivals = rival_warning(port)
+        if rivals:
+            self.get_logger().error(
+                'Starting anyway, but expect corrupt traffic.%s' % rivals)
 
         self.arm = Arm_Device(com=port)
 
@@ -131,6 +161,16 @@ class MoveItBridge(Node):
 
         self.create_subscription(JointState, '/joint_states', self.on_js, 10)
         self.timer = self.create_timer(1.0 / rate, self.tick)
+
+        self.write_rate = rate
+        self.encoder_rate = 0.0
+        self.encoder_timer = None
+        # Advertised unconditionally: a topic that exists and is silent is a
+        # diagnosable state; one that was never advertised looks like a
+        # crashed node.
+        self.encoder_pub = self.create_publisher(JointState, '/servo_states', 10)
+        self.add_on_set_parameters_callback(self._on_set_params)
+        self._set_encoder_rate(encoder_rate)
         self.get_logger().info(
             'Following /joint_states -> servos at %.1f Hz, gripper moves over '
             '%d ms (live: ros2 param set /moveit_bridge grip_time_ms N). The '
@@ -195,6 +235,74 @@ class MoveItBridge(Node):
                                                  time=self.track_time)
 
         self.last_written = self.target
+
+    def _set_encoder_rate(self, hz):
+        """Start, restart or stop the encoder timer. Safe to call at any time."""
+        if self.encoder_timer is not None:
+            self.destroy_timer(self.encoder_timer)
+            self.encoder_timer = None
+        self.encoder_rate = hz
+
+        if hz <= 0.0:
+            self.get_logger().info(
+                'Encoder read-back OFF; /servo_states is advertised but '
+                'silent. Turn it on with:  ros2 param set /moveit_bridge '
+                'encoder_rate 10.0')
+            return
+
+        self.encoder_timer = self.create_timer(1.0 / hz, self.read_encoders)
+        self.get_logger().info(
+            'Encoder read-back ON: /servo_states at %.1f Hz, sharing the bus '
+            'with the %.1f Hz write tick.' % (hz, self.write_rate))
+
+        # A sweep is ~12ms and blocks the write tick. Past roughly a third of
+        # the cycle, reads delay the writes they are being compared against.
+        budget = 0.33 / self.write_rate
+        if 1.0 / hz < budget:
+            self.get_logger().warn(
+                '%.1f Hz leaves under a third of the %.1f Hz write cycle for '
+                'writing. Reads will delay the writes they are being compared '
+                'against; %.1f Hz or less is safer.'
+                % (hz, self.write_rate, 1.0 / budget))
+
+    def _on_set_params(self, params):
+        """Apply encoder_rate the moment it is set, not at the next start."""
+        for p in params:
+            if p.name != 'encoder_rate':
+                continue
+            hz = float(p.value)
+            if hz < 0.0:
+                return SetParametersResult(
+                    successful=False, reason='encoder_rate cannot be negative')
+            self._set_encoder_rate(hz)
+        return SetParametersResult(successful=True)
+
+    def read_encoders(self):
+        """Sweep the encoders and publish them on /servo_states.
+
+        Floats, not the whole-degree Arm_serial_servo_read the mirror uses: one
+        degree is twice the 0.5-servo-degree step this node uses to decide a
+        joint moved, so int readings would be mostly quantisation.
+
+        A silent servo publishes nothing for that joint rather than a held or
+        zeroed value -- this topic exists to be differenced against
+        /joint_states, and a substituted value is a fabricated agreement.
+        """
+        servo_deg = self.arm.Arm_serial_servo_read6()
+        urdf = servo_to_urdf(servo_deg)
+
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        for name, angle in zip(JOINT_NAMES, urdf):
+            if angle is not None:
+                msg.name.append(name)
+                msg.position.append(angle)
+        if not msg.name:
+            self.get_logger().warn('no servo answered; nothing to publish',
+                                   throttle_duration_sec=5.0)
+            return
+        self.encoder_pub.publish(msg)
+
 
 def main(args=None):
     rclpy.init(args=args)

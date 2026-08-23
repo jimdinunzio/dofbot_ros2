@@ -46,6 +46,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 from moveit_configs_utils import MoveItConfigsBuilder
 
@@ -73,6 +74,12 @@ def generate_launch_description():
     ld.add_action(DeclareLaunchArgument(
         'port', default_value='/dev/ttyTHS1',
         description='Serial port for the bus servos.'))
+    ld.add_action(DeclareLaunchArgument(
+        'encoder_rate', default_value='0.0',
+        description='Hz for moveit_bridge to read the encoders back onto '
+                    '/servo_states, for measure_tracking. 0 disables it. Also '
+                    'settable live: ros2 param set /moveit_bridge '
+                    'encoder_rate 10.0'))
 
     # world -> base_link, from the SRDF virtual joint.
     ld.add_action(_include('static_virtual_joint_tfs.launch.py'))
@@ -97,10 +104,21 @@ def generate_launch_description():
         package='dofbot_ctrl', executable='moveit_bridge',
         name='moveit_bridge', output='screen',
         condition=IfCondition(LaunchConfiguration('bridge')),
-        # Only the port. grip_time_ms is deliberately NOT passed from here: a
-        # launch default silently outranks the node's own, so the value in
-        # moveit_bridge.py would stop being the value in use. Change it there,
-        # or with `ros2 param set` on the running node.
-        parameters=[{'port': LaunchConfiguration('port')}]))
+        # The port and encoder_rate. grip_time_ms is deliberately NOT passed
+        # from here: a launch default silently outranks the node's own, so the
+        # value in moveit_bridge.py would stop being the value in use. Change
+        # it there, or with `ros2 param set` on the running node.
+        #
+        # encoder_rate is safe to pass because its default here (0.0) is the
+        # same as the node's, so passing it cannot change the default -- it
+        # only lets the launch line set it. It is live-settable too.
+        #
+        # ParameterValue with an explicit type because a LaunchConfiguration
+        # substitutes to a STRING, and encoder_rate is declared double -- the
+        # node would refuse to start on the type mismatch.
+        parameters=[{'port': LaunchConfiguration('port'),
+                     'encoder_rate': ParameterValue(
+                         LaunchConfiguration('encoder_rate'),
+                         value_type=float)}]))
 
     return ld
