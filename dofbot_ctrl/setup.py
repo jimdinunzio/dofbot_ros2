@@ -7,7 +7,10 @@ package_name = 'dofbot_ctrl'
 setup(
     name=package_name,
     version='0.0.1',
-    packages=[package_name],
+    # tuning/ is a subpackage, so it must be named explicitly -- packages=
+    # is not recursive, and omitting it installs the entry points without the
+    # modules they point at.
+    packages=[package_name, package_name + '.tuning'],
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -32,6 +35,8 @@ setup(
             'moveit_bridge = dofbot_ctrl.moveit_bridge:main',
             'chassis_collision = dofbot_ctrl.chassis_collision:main',
             'pick_place = dofbot_ctrl.pick_place:main',
+            'measure_bus = dofbot_ctrl.tuning.measure_bus:main',
+            'measure_tracking = dofbot_ctrl.tuning.measure_tracking:main',
         ],
     },
 )
