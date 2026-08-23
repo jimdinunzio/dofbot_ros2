@@ -105,11 +105,13 @@ GRIPPER_LINKS = FINGER_LINKS + (TOOL_LINK, WRIST_LINK)
 
 BASE_FRAME = 'base_link'
 
-# The node that owns the real servos, and the parameter holding how long it
-# gives the gripper. Asked for rather than copied: a second number here that
-# drifted from the bridge's would silently reintroduce the truncation bug.
+# The node that owns the real servos, and the two parameters holding how long
+# it gives the jaws -- closing onto an object, and opening onto nothing. Asked
+# for rather than copied: a second number here that drifted from the bridge's
+# would silently reintroduce the truncation bug.
 BRIDGE_NODE = 'moveit_bridge'
 BRIDGE_GRIP_TIME = 'grip_time_ms'
+BRIDGE_OPEN_TIME = 'open_time_ms'
 
 # Named arm states, in ARM_JOINT_NAMES order. These mirror the group_states in
 # dofbot_description.srdf -- change both together.
@@ -577,7 +579,7 @@ class DofbotMoveIt:
                 return
             rclpy.spin_once(self.node, timeout_sec=left)
 
-    def _gripper_settle(self):
+    def _gripper_settle(self, opening=False):
         """Seconds the real jaws still need after the action says they arrived.
 
         THE GRIPPER ACTION IS NOT A REPORT ABOUT THE HARDWARE. It finishes when
@@ -593,8 +595,12 @@ class DofbotMoveIt:
         means the arm would start lifting with the object not yet gripped.
 
         The duration is asked of the bridge, never copied, so the packet's time
-        and the wait for it cannot drift apart. NO BRIDGE MEANS NO SERVOS --
-        simulation -- and then there is nothing to wait for.
+        and the wait for it cannot drift apart. That is also why `opening`
+        is passed rather than inferred here: the bridge sends the jaws open on
+        a different, much shorter timer than it closes them, and this has to
+        ask for whichever one it actually used.
+
+        NO BRIDGE MEANS NO SERVOS -- simulation -- and nothing to wait for.
         """
         if not self._bridge.wait_for_service(timeout_sec=0.5):
             if not self._no_bridge_logged:
@@ -602,9 +608,10 @@ class DofbotMoveIt:
                               % BRIDGE_NODE)
                 self._no_bridge_logged = True
             return 0.0
-        req = GetParameters.Request(names=[BRIDGE_GRIP_TIME])
+        name = BRIDGE_OPEN_TIME if opening else BRIDGE_GRIP_TIME
+        req = GetParameters.Request(names=[name])
         res = self._spin_until(self._bridge.call_async(req), timeout=2.0,
-                               what='%s %s' % (BRIDGE_NODE, BRIDGE_GRIP_TIME))
+                               what='%s %s' % (BRIDGE_NODE, name))
         # An older bridge without the parameter answers PARAMETER_NOT_SET, which
         # is not an error here -- it means that bridge never slows the gripper,
         # so there is nothing extra to wait for.
@@ -617,13 +624,20 @@ class DofbotMoveIt:
 
         Returns once the REAL jaws have finished moving, not merely once the
         action has -- see _gripper_settle() for why those are different and
-        what goes wrong when the difference is ignored.
+        what goes wrong when the difference is ignored. Opening is much quicker
+        than closing, so which one this is has to be worked out first.
         """
+        # Direction, read BEFORE the goal is sent: the mock joint tracks the
+        # command within a cycle, so afterwards the "current" angle is already
+        # the one just asked for and every move looks stationary.
+        opening = angle < self.current_joints(include_gripper=True)[-1]
+
         goal = GripperCommand.Goal()
         goal.command.position = float(angle)
         goal.command.max_effort = float(max_effort)
-        self.log.info('set_gripper(%.3f rad = %.1f deg)'
-                      % (angle, degrees(angle)))
+        self.log.info('set_gripper(%.3f rad = %.1f deg, %s)'
+                      % (angle, degrees(angle),
+                         'opening' if opening else 'closing'))
         # The gripper controller reports reached_goal=False when it stalls on an
         # object, which is the normal outcome of a successful grasp, so the
         # result is logged rather than raised on.
@@ -636,7 +650,7 @@ class DofbotMoveIt:
         # even by the time the action returns. Erring long costs a tenth of a
         # second; erring short lets the next arm write cut the close off, which
         # is the whole bug.
-        self._sleep(self._gripper_settle())
+        self._sleep(self._gripper_settle(opening))
         return result
 
     def open_gripper(self):

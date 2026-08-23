@@ -21,12 +21,15 @@ Design, and why each piece is here:
   it near the tick period lets the servo interpolate smoothly from one sample to
   the next instead of snapping.
 
-- The gripper gets its own move time, in its own packet. A jaw close arrives as
+- The gripper gets its own move time, in its own packet. A jaw move arrives as
   ONE step: the gripper controller commands a position, mock hardware echoes it
   back in the same cycle, and nothing re-sends it. So the servo runs the whole
-  travel at the duration it was handed -- `grip_time_ms` IS the closing speed,
-  and doubling it halves it. The arm cannot be slowed this way: its writes are
+  travel at the duration it was handed -- that duration IS the jaw speed, and
+  doubling it halves it. The arm cannot be slowed this way: its writes are
   reissued every tick, so each one is cut short by the next.
+
+  Closing and opening get DIFFERENT durations. `grip_time_ms` is slow because a
+  close lands on an object; `open_time_ms` is short because an open does not.
 
   AND THE ARM MUST NOT ADDRESS SERVO 6 WHILE THAT MOVE IS RUNNING. write6
   re-commands all six, so an arm write landing mid-close replaces the slow move
@@ -113,7 +116,18 @@ class MoveItBridge(Node):
         # The servo's field is 12 bits of milliseconds (protocol 0x2A: time_H is
         # 0x00-0x0F), so anything past 4095 is not a slower close -- it is a
         # different move time entirely, wrapped.
-        self.declare_parameter('grip_time_ms', 2000)   # gripper-only move time
+        self.declare_parameter('grip_time_ms', 2000)   # jaw CLOSE move time
+        # Jaw OPEN move time. Separate from grip_time_ms because the slow close
+        # exists to stop the jaws slamming onto an object, and an open has no
+        # object to protect -- three of the four seconds a pick spent waiting on
+        # the gripper were spent opening onto nothing.
+        #
+        # Not track_time_ms either: the linkage is over-centre and its travel
+        # ends at the open peak, so a full-speed open drives it into that stop.
+        # 400 ms is a guess at "brisk but not slamming" and is the one number
+        # here to try shorter, live:
+        #     ros2 param set /moveit_bridge open_time_ms 250
+        self.declare_parameter('open_time_ms', 400)
 
         # Hz to read the encoders back and publish them on /servo_states.
         # 0 disables it entirely, which is the default: see the docstring for
@@ -172,14 +186,19 @@ class MoveItBridge(Node):
         self.add_on_set_parameters_callback(self._on_set_params)
         self._set_encoder_rate(encoder_rate)
         self.get_logger().info(
-            'Following /joint_states -> servos at %.1f Hz, gripper moves over '
-            '%d ms (live: ros2 param set /moveit_bridge grip_time_ms N). The '
+            'Following /joint_states -> servos at %.1f Hz; jaws close over '
+            '%d ms and open over %d ms (both live via ros2 param set). The '
             'first move is a slow sync to the model pose -- support the arm.'
-            % (rate, self.grip_time()))
+            % (rate, self.grip_time(), self.grip_time(opening=True)))
 
-    def grip_time(self):
-        """The gripper's move time, in ms, as it stands right now."""
-        return int(self.get_parameter('grip_time_ms').value)
+    def grip_time(self, opening=False):
+        """The gripper's move time in ms, as it stands right now.
+
+        Two numbers, because closing and opening are not the same job: a close
+        lands on an object and a open does not.
+        """
+        name = 'open_time_ms' if opening else 'grip_time_ms'
+        return int(self.get_parameter(name).value)
 
     def on_js(self, msg):
         """Store the newest pose as a servo command. Ignore partial messages
@@ -212,9 +231,13 @@ class MoveItBridge(Node):
             # because this is the write whose duration is tuned by hand, and
             # "did the value I set reach a packet?" is otherwise unanswerable
             # from outside.
-            ms = self.grip_time()
-            self.get_logger().info('gripper -> %.1f servo deg over %d ms'
-                                   % (self.target[_GRIP], ms))
+            # A low servo value is open (joint_map._GRIP_SERVO_RANGE), so a
+            # target below the last one written is the jaws opening.
+            opening = self.target[_GRIP] < self.last_written[_GRIP]
+            ms = self.grip_time(opening)
+            self.get_logger().info('gripper %s -> %.1f servo deg over %d ms'
+                                   % ('opening' if opening else 'closing',
+                                      self.target[_GRIP], ms))
             self.arm.Arm_serial_servo_write(_GRIP_ID, self.target[_GRIP], ms)
             self.grip_until = now + ms * 1000000
 
