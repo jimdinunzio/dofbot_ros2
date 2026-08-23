@@ -248,7 +248,7 @@ SODA_CAN = register(GraspableObject(
     # WHAT IS STORED IS A WIDTH, NOT THE ANGLE, because that is the coordinate
     # the rest of the model works in: grip_angle_for interpolates
     # grasp_width
-    squeeze=0.004,
+    squeeze=0.005,
 
     mesh='package://dofbot_description/meshes/cokecan.obj'))
 
