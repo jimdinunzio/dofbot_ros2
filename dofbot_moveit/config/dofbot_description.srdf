@@ -37,7 +37,8 @@
         <joint name="arm5_Joint" value="0"/>
     </group_state>
     <!--The five arm states below are mirrored in dofbot_ctrl/moveit_client.py
-        (NAMED_STATES); change both together. Each was validated against the
+        (NAMED_STATES); change both together. dofbot_ctrl's
+        test/test_named_states.py parses this file and fails if they diverge. Each was validated against the
         live planning scene by `pick_place` in its check-states mode, rather
         than eyeballed in RViz.
         'init' used to be {0, -1.57, 1.57, 1.57, 0}; /check_state_validity
@@ -68,25 +69,26 @@
         <joint name="arm4_Joint" value="0.5157"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
-    <!--Transport pose: arm high and tucked, TCP (0.100, 0, 0.282), phi=1.4.-->
+    <!--Transport pose: arm high and tucked, TCP (0.082, 0.001, 0.325),
+        phi=1.08. Measured on the arm rather than derived.-->
     <group_state name="carry" group="arm_group">
-        <joint name="arm1_Joint" value="0"/>
-        <joint name="arm2_Joint" value="-0.7112"/>
-        <joint name="arm3_Joint" value="0.8416"/>
-        <joint name="arm4_Joint" value="1.2695"/>
-        <joint name="arm5_Joint" value="0"/>
+        <joint name="arm1_Joint" value="0.0"/>
+        <joint name="arm2_Joint" value="-0.718"/>
+        <joint name="arm3_Joint" value="0.840"/>
+        <joint name="arm4_Joint" value="0.959"/>
+        <joint name="arm5_Joint" value="0.0"/>
     </group_state>
-    <!--Release pose: TCP (0.150, 0.150, 0.282), phi=1.4, front-left and high.
-        SITE-SPECIFIC - it assumes a bin whose rim is below ~0.3 m off the left
-        front. Re-measure for the actual bin. Sharing phi with 'carry' means
-        moving between the two yaws and translates a held object without
-        rolling it over.-->
+    <!--Release pose: TCP (0.113, 0.122, 0.334), phi=1.15, front-left and high.
+        Measured on the arm rather than derived, and SITE-SPECIFIC - it assumes
+        a bin whose rim is below ~0.3 m off the left front. Re-measure for the
+        actual bin. It sits within 0.07 rad of 'carry' phi, so moving between
+        the two yaws and translates a held object without tipping it.-->
     <group_state name="over_trash" group="arm_group">
-        <joint name="arm1_Joint" value="0.7821"/>
-        <joint name="arm2_Joint" value="0.6963"/>
-        <joint name="arm3_Joint" value="-0.5057"/>
-        <joint name="arm4_Joint" value="1.2094"/>
-        <joint name="arm5_Joint" value="0"/>
+        <joint name="arm1_Joint" value="0.82"/>
+        <joint name="arm2_Joint" value="0.229"/>
+        <joint name="arm3_Joint" value="-0.025"/>
+        <joint name="arm4_Joint" value="0.942"/>
+        <joint name="arm5_Joint" value="0.0"/>
     </group_state>
     <!-- Not the joint's lower limit. The linkage is over-centre: span peaks with
          the gear arms parallel and falls away on both sides, and that peak sits

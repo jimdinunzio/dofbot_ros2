@@ -135,15 +135,16 @@ BRIDGE_OPEN_TIME = 'open_time_ms'
 # reports arm3_Link/chassis_link, which only became a collision once chassis_link
 # and floor_link became real URDF links.
 #
-# 'ready', 'carry' and 'over_trash' were solved with dofbot_kinematics and
-# then checked against the live planning scene with /check_state_validity
-# (`ros2 run dofbot_ctrl pick_place --check-states`). theta1 is set to exactly
-# zero on the on-axis states rather than to the -0.007 the IK returns; that
-# 0.6 mm lateral tool offset is not worth carrying in a named pose.
+# 'ready' was solved with dofbot_kinematics; 'carry' and 'over_trash' are
+# measured on the arm rather than derived. All three are checked against the
+# live planning scene with /check_state_validity (`ros2 run dofbot_ctrl
+# pick_place --check-states`). theta1 is set to exactly zero on the on-axis
+# states rather than to the -0.007 the IK returns; that 0.6 mm lateral tool
+# offset is not worth carrying in a named pose.
 #
-# 'carry' and 'over_trash' share phi = 1.4 on purpose: a held object keeps the
-# tilt it was grasped at, so moving between them yaws and translates the load
-# without rolling it over.
+# 'carry' and 'over_trash' sit within 0.07 rad of the same phi: a held object
+# keeps the tilt it was grasped at, so moving between them yaws and translates
+# the load without tipping it.
 NAMED_STATES = {
     #                theta1  theta2   theta3   theta4  theta5
     'up':         (0.0,     0.0,     0.0,     0.0,    0.0),
@@ -154,9 +155,9 @@ NAMED_STATES = {
     # observation: arm up and tucked back, TCP (0.100, 0, 0.322) phi=1.0, so the
     # chassis camera has a clear view of the floor in front
     'ready':      (0.0,    -0.7932,  1.2775,  0.5157, 0.0),
-    # arm high and tucked, TCP (0.100, 0, 0.282) phi=1.4 -- safe to drive with
+    # arm high and tucked, TCP (0.082, 0.001, 0.325) phi=1.08 -- safe to drive
     'carry':      (0.0,    -0.718,  0.840,  0.959, 0.0),
-    # release pose, TCP (0.150, 0.150, 0.282) phi=1.4, front-left and high.
+    # release pose, TCP (0.113, 0.122, 0.334) phi=1.15, front-left and high.
     # This one is SITE-SPECIFIC: it assumes a bin whose rim is below ~0.3 m and
     # is within reach off the left front. Re-measure it for the actual bin.
     'over_trash': (0.82,  0.229, -0.025,  0.942, 0.0),
