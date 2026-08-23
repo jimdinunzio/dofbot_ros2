@@ -9,8 +9,6 @@ runs -- pyserial takes no exclusive lock, so a second owner (e.g. arm-service)
 interleaves bytes on the bus and corrupts reads silently rather than failing.
 """
 
-import os
-
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
@@ -18,6 +16,7 @@ from sensor_msgs.msg import JointState
 from Arm_Lib import Arm_Device
 
 from dofbot_ctrl.joint_map import JOINT_NAMES, servo_to_urdf
+from dofbot_ctrl.serial_port import rival_warning
 
 
 class JointStateMirror(Node):
@@ -25,8 +24,9 @@ class JointStateMirror(Node):
     def __init__(self):
         super().__init__('joint_state_mirror')
         self.declare_parameter('port', '/dev/ttyTHS1')
-        # Each servo read blocks for the driver's serial timeout, so a full
-        # six-servo sweep costs ~120ms; rates much above ~8Hz cannot keep up.
+        # A six-servo sweep costs ~12ms, so this could run far faster. Left at
+        # 5Hz because nothing here needs more: it feeds RViz, and a higher rate
+        # only spends bus time. Measured ceiling is ~82Hz (see measure_bus).
         self.declare_parameter('rate', 5.0)
         self.declare_parameter('release_torque', False)
 
@@ -60,33 +60,7 @@ class JointStateMirror(Node):
         leave behind, because killing a `ros2 launch` kills the launcher but not
         always its children.
         """
-        me = os.getpid()
-        rivals = []
-        try:
-            for pid in os.listdir('/proc'):
-                if not pid.isdigit() or int(pid) == me:
-                    continue
-                fd_dir = '/proc/%s/fd' % pid
-                try:
-                    holds = any(os.readlink(os.path.join(fd_dir, fd)) == self.port
-                                for fd in os.listdir(fd_dir))
-                except OSError:
-                    continue
-                if holds:
-                    try:
-                        with open('/proc/%s/cmdline' % pid, 'rb') as f:
-                            cmd = f.read().replace(b'\0', b' ').decode().strip()
-                    except OSError:
-                        cmd = '?'
-                    rivals.append('%s (pid %s)' % (cmd.split()[-1] if cmd else '?',
-                                                   pid))
-        except OSError:
-            return ''
-        if not rivals:
-            return ''
-        return (' ANOTHER PROCESS ALSO HAS %s OPEN: %s -- two nodes on one bus '
-                'corrupt each other\'s replies and look identical to a dead '
-                'arm. Kill it first.' % (self.port, ', '.join(rivals)))
+        return rival_warning(self.port)
 
     def tick(self):
         servo_deg = [self.arm.Arm_serial_servo_read(sid)
