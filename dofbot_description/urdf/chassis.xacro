@@ -13,13 +13,36 @@
   origin at the arm mounting plate (its underside is z=0).
 
   The floor is attached to base_link, not to the world, on purpose: the robot is
-  mobile, and the work surface is always the same fixed distance below the arm's
-  mounting plate. Hanging it off base_link keeps that true as the robot drives.
+  mobile, and the work surface stays a fixed distance below the arm's mounting
+  plate for as long as it stays on one surface. Hanging it off base_link keeps
+  that true as the robot drives. Change surface and the distance changes; see
+  DOFBOT_FLOOR below.
 
   Defaults are the values measured on the real robot and validated at runtime
   through the chassis_collision node (which this replaces).
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Which surface the robot is standing on. The wheels sink into a soft
+       floor, so the whole robot rides lower and the ground sits CLOSER to the
+       mounting plate. Measured 2026-08-25 from the plate's underside, which is
+       base_link z=0:
+
+         carpet      22 mm   Jim's office; where picking is tested
+         hard floor  26 mm   the contest surface
+
+       Unset or unrecognised gives carpet, and that is the SAFE way round.
+       22 mm models the ground HIGHER than a hard floor really is, so MoveIt
+       gives up the bottom 4 mm of reach. The reverse puts the collision plane
+       BELOW real carpet and lets the gripper plan into it.
+
+       An env var rather than a xacro:arg for the same reason as DOFBOT_GRIPPER
+       in dofbot.urdf: urdf_launch runs xacro with no arguments, and display,
+       mirror and gui_teleop all load the model through urdf_launch, so a
+       xacro:arg could never be overridden there. -->
+  <xacro:property name="floor_profile" value="$(optenv DOFBOT_FLOOR carpet)" />
+  <xacro:property name="ground_drop"
+                  value="${0.026 if floor_profile == 'hard' else 0.022}" />
 
   <xacro:macro name="dofbot_chassis" params="
       parent:=base_link
@@ -27,7 +50,7 @@
       height:=0.335
       back_offset:=0.265
       z_bottom:=0.003
-      floor_z_top:=-0.015
+      floor_z_top:=${-ground_drop}
       floor_thickness:=0.005
       floor_x_front:=0.35
       floor_x_back:=-0.5

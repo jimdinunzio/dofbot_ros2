@@ -326,9 +326,6 @@ bin off the left front with its rim below ~0.3 m.
 
 ## Known open items
 
-- **`floor_z_top:=-0.015`** in `chassis.xacro` was fitted empirically in RViz
-  against the old `Z0` of 125.5 mm. It may have absorbed part of that error and
-  needs a hardware re-check, or grasps come in high.
 - **The extension meshes render detached in RViz.** The URDF places them at
   `origin 0 0 0` but they were exported in a different frame. Cosmetic —
   `gripper.py` does not depend on it — but it looks wrong.
