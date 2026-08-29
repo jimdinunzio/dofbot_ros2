@@ -446,4 +446,13 @@ dropout); correct near-surface → centre explicitly; and set grasp height from
 known geometry rather than from the detection point. See the plan's
 `LargeModel_ws_src` section for the vendor's transform chain — ours is
 eye-to-hand (chassis-mounted), so their FK term drops out and `EndToCamMat`
-becomes a static `base_link → camera` TF.
+becomes a static TF.
+
+That static TF composes through the **robot frame**, which is what the camera
+and the arm actually share; the camera is bolted to the chassis, not to the arm,
+so `robot → camera` is what the mount fixes. The other half is
+`robot → base_link = (0.265, 0, ground)`, and its `ground` term depends on the
+floor type because the wheels sink. Both halves are in
+[ARCHITECTURE.md](ARCHITECTURE.md) under **Frames**. Compose them and you do get
+a static `base_link → camera`, but deriving it directly hides the fact that
+driving onto a different surface changes it.

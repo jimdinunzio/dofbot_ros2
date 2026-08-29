@@ -229,6 +229,45 @@ This distinction has caused more trouble than anything else in the project.
 
 ---
 
+## Frames
+
+`base_link` is the URDF root, and every number in this stack is expressed in it:
+**+x forward** into the pick zone, **-x** back toward the chassis, **+z up**,
+origin at the **underside** of the arm's mounting plate.
+
+That is the arm's own frame. The arm is bolted to a mobile robot, and the
+**robot frame is what the arm and the Oak-D camera share** — the camera is
+eye-to-hand on the chassis, so it cannot be reached through the arm's FK. This
+workspace has never defined a robot frame: the chassis is modelled *backwards*,
+hanging off `base_link` as a child (`chassis.xacro`). The transform below is
+what the robot-side session needs, and it is the inverse of that modelling.
+
+Taking the robot origin as the usual `base_footprint` — the chassis axis,
+projected to the ground:
+
+```
+robot_origin -> base_link      xyz = 0.265  0  <ground>      rpy = 0 0 0
+```
+
+| term | value | how it is known |
+|---|---|---|
+| x | 0.265 | chassis axis to plate, measured; `back_offset` in `chassis.xacro` |
+| y | 0 | arm sits on the robot centreline — confirmed, not assumed |
+| yaw | 0 | arm points dead forward — confirmed, not assumed |
+| z | 0.022 carpet / 0.026 hard floor | plate underside above ground, measured |
+
+**The z is not a constant.** The wheels sink, so a soft surface drops the whole
+robot and brings the ground *closer* to the plate. Carpet is the smaller number
+for exactly that reason. `DOFBOT_FLOOR` selects it (see `chassis.xacro`);
+unset means carpet, which is where picking is currently tested.
+
+Getting that env var wrong is not symmetric. Carpet's 22 mm models the ground
+*higher* than a hard floor really is, which only costs 4 mm of low reach.
+The hard-floor number on carpet puts the collision plane *below* the real
+surface and lets the gripper plan into it.
+
+---
+
 ## Collision geometry
 
 The shipped URDF reused raw CAD visual meshes for `<collision>`: 1,049,211
@@ -410,7 +449,8 @@ question, and it helps whether or not the loop is ever closed.
 
 ## Deliberately out of scope
 
-Oak-D integration, the camera → `base_link` static TF, hand-eye calibration, and
+Oak-D integration, the camera TF (see **Frames** for the robot-frame half of
+it that is already measured), hand-eye calibration, and
 visual servoing. The layer above attaches at exactly one seam: `pick(x, y, z)`.
 
 When perception arrives it supplies the **position**; `graspable.py` already
