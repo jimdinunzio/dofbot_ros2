@@ -21,6 +21,7 @@ import os
 import xml.etree.ElementTree as ET
 
 import pytest
+import yaml
 
 from dofbot_ctrl import dofbot_kinematics as kin
 
@@ -31,9 +32,20 @@ moveit_client = pytest.importorskip(
 _SRDF = os.path.join(os.path.dirname(__file__), '..', '..',
                      'dofbot_moveit', 'config', 'dofbot_description.srdf')
 
+_INITIAL = os.path.join(os.path.dirname(_SRDF), 'initial_positions.yaml')
+
+# The pose pick_place.launch.py comes up in, and so the pose the bridge's sync
+# move takes the real arm to.
+_STARTUP_STATE = 'init'
+
 needs_srdf = pytest.mark.skipif(
     not os.path.exists(_SRDF),
     reason='dofbot_moveit/config/dofbot_description.srdf not found next to '
+           'this package')
+
+needs_initial = pytest.mark.skipif(
+    not os.path.exists(_INITIAL),
+    reason='dofbot_moveit/config/initial_positions.yaml not found next to '
            'this package')
 
 
@@ -82,3 +94,18 @@ def test_named_states_are_inside_the_joint_limits(name):
     for joint, q, (lo, hi) in zip(kin.JOINT_NAMES, joints, kin.JOINT_LIMITS):
         assert lo <= q <= hi, '%s/%s = %.4f not in %.4f..%.4f' % (
             name, joint, q, lo, hi)
+
+
+@needs_initial
+@pytest.mark.parametrize('joint', sorted(moveit_client.ARM_JOINT_NAMES))
+def test_mock_hardware_starts_in_the_startup_state(joint):
+    """The fake system's initial_value for each arm joint is that state's.
+
+    These are the numbers the stack is IN at launch, before anything plans, so
+    a stale copy here is an arm standing somewhere nobody asked for.
+    """
+    with open(_INITIAL) as f:
+        initial = yaml.safe_load(f)['initial_positions']
+    ours = dict(zip(moveit_client.ARM_JOINT_NAMES,
+                    moveit_client.NAMED_STATES[_STARTUP_STATE]))
+    assert initial[joint] == pytest.approx(ours[joint], abs=1e-9)

@@ -1,9 +1,17 @@
-# Default initial positions for dofbot_description's ros2_control fake system
+# Where the ros2_control fake system starts, and therefore the pose the arm is
+# in the moment pick_place.launch.py comes up: the SRDF 'init' state, folded
+# and stowed. On hardware moveit_bridge's first (sync) write takes the real arm
+# here from wherever it was physically left, so this has to be a pose that is
+# safe to arrive at unattended -- the all-zeros pose is not, it stands the arm
+# straight up.
+#
+# These five arm values are 'init' from dofbot_description.srdf (mirrored in
+# dofbot_ctrl/moveit_client.py NAMED_STATES); keep all three in step.
 
 initial_positions:
   Rlink1_Joint: 0
-  arm1_Joint: 0
-  arm2_Joint: 0
-  arm3_Joint: 0
-  arm4_Joint: 0
+  arm1_Joint: 0.0175
+  arm2_Joint: -1.1694
+  arm3_Joint: 1.5010
+  arm4_Joint: 1.5533
   arm5_Joint: 0
