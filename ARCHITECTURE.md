@@ -5,7 +5,7 @@ does, where the load-bearing decisions live, and which numbers are measured
 versus derived. It is not API documentation — the modules carry that in their
 docstrings, and those docstrings are the primary source. This is the map.
 
-Last verified against the tree on 2026-08-19: 110 tests pass, 3 skipped.
+Last verified against the tree on 2026-09-01: 160 tests pass, 3 skipped.
 
 ---
 
@@ -30,6 +30,7 @@ planning scene. Perception will eventually plug in by calling `pick()`.
 | `dofbot_ctrl` | Everything we wrote. Kinematics, gripper model, pick sequence, hardware bridges. |
 | `dofbot_arm_lib` | Vendor serial driver (`Arm_Lib`), repackaged. |
 | `dofbot_interface` | Message/service definitions. |
+| `arm_service` | **Not a colcon package** — no `package.xml`, so `colcon` passes over it. The XML-RPC front door: a remote caller asks for a pick, this runs the `ros2` commands. |
 
 ---
 
@@ -312,6 +313,14 @@ ros2 launch dofbot_ctrl pick_place.launch.py
 ros2 run dofbot_ctrl pick_place -- --check-states
 ros2 run dofbot_ctrl pick_place -- --plan-only 0.22 0.0 0.061
 ros2 run dofbot_ctrl pick_place -- 0.22 0.0 0.061      # can centre, on the floor
+
+# the same sequence as two commands. --pick carries it, --place drops it; what
+# is being carried lives in the planning scene between them, not in the process
+ros2 run dofbot_ctrl pick_place -- --pick 0.22 0.0 0.061
+ros2 run dofbot_ctrl pick_place -- --place
+
+# recovery after a run that died partway: clear the scene, let go, go home
+ros2 run dofbot_ctrl pick_place -- --reset
 ```
 
 `x y z` is the object **centre** in `base_link` — for something resting on the
@@ -347,8 +356,32 @@ planning scene. This is what stops a pose being eyeballed: the vendor's original
 `init` collided with `chassis_link` and nobody noticed until it was checked.
 
 `init` was hand-posed on the real arm and read out with `calibrate_zero`, so its
-joint values are physical fact. `over_trash` is **site-specific** — it assumes a
-bin off the left front with its rim below ~0.3 m.
+joint values are physical fact. `over_trash` is a **placeholder for a detected
+bin**: the posture was measured on the arm off the left front, then rotated
+on-axis (`theta1` is the only joint that moved), so it now drops straight in
+front at TCP (0.167, 0.001, 0.334). It assumes a rim below ~0.3 m and 0.167 m
+out, which is barely past the chassis. The bin's real position is to come from
+perception, and `place()` will then take coordinates the way `pick()` does.
+
+---
+
+## Driving it from another machine
+
+`arm_service/` is the seam for a caller that has no ROS: an XML-RPC server that
+turns `pick_can(x, y, z)` into the `ros2` commands above. It holds no rclpy state
+of its own — one long-lived `ros2 launch` it supervises, one short-lived
+`ros2 run` per command — so it restarts freely and the stack it drives is the
+same one a terminal drives.
+
+```bash
+src/dofbot_ros2/arm_service/start_arm_server.sh      # or the systemd unit
+python3 arm_client.py --url http://192.168.55.1:8002/ pick 0.22 0.0 0.061
+```
+
+`enable_arm`, `disable_arm`, `pick_can`, `place_can`, `move_to_state`,
+`reset_arm`. Motion is serialized: a second request is answered `busy` rather
+than queued, because a queued arm command executes against a world that has
+moved on. See `arm_service/README.md`.
 
 ---
 
@@ -375,6 +408,9 @@ bin off the left front with its rim below ~0.3 m.
   (the table was swept closing, and grasps close, so the normal path matches),
   and the object does not sit on the gripper centreline — but `scene_objects`
   attaches it symmetrically, so a small pose error is carried into the place.
+- **The place target is a fixed pose, not a found one.** `over_trash` drops
+  straight in front at 0.167 m; nothing looks for the bin, and `place()` takes
+  no coordinates. This is the next thing perception plugs into after `pick()`.
 - **Execution is open-loop.** MoveIt believes the mock joints, not the encoders.
   A stalled or blocked servo goes undetected. Whether to change that is an open
   question, now being answered by measurement rather than by argument — see
