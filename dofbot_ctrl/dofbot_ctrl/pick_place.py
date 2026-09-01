@@ -15,6 +15,9 @@ Pick and place, driven by coordinates rather than by RViz.
     DOFBOT_GRIPPER=stock ros2 run dofbot_ctrl pick_place -- \
         --object test_block 0.22 0.0 0.015
     ros2 run dofbot_ctrl pick_place -- --check-states
+    # the two halves of a pick, as separate commands: carry it, then drop it
+    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.061
+    ros2 run dofbot_ctrl pick_place -- --place
     # recover after a run that died partway: empty the scene, let go, go home
     ros2 run dofbot_ctrl pick_place -- --reset
 
@@ -37,7 +40,9 @@ SEQUENCE
     cartesian_move straight up, as far as the arm has room for (may be nothing)
     move_named('carry')       -- THIS is what clears the floor; see min_lift
 
-then place(): over_trash -> open -> detach + remove -> carry.
+then place(): over_trash -> open -> detach + remove -> carry. It reads what is
+attached from the planning scene when this process did not pick it, so the halves
+split cleanly across two `ros2 run` invocations (--pick, then --place).
 
 WHAT _feasible_approach ACTUALLY CHOOSES
 ----------------------------------------
@@ -553,7 +558,7 @@ class PickPlace(Node):
         the sweep, together with the allowance that makes the grasp legal.
 
         Leftovers are the normal case, not an edge: --plan-only deliberately
-        leaves the object standing so it can be looked at, --no-place ends with
+        leaves the object standing so it can be looked at, --pick ends with
         it attached to the gripper, and any run that fails partway leaves it
         wherever it got to. Each `ros2 run` is a fresh process with no memory of
         the last one, so the scene is the only place that state lives.
@@ -564,7 +569,7 @@ class PickPlace(Node):
         clean run, which is most of them.
 
         Detach before remove: removing a WORLD object does not touch an
-        ATTACHED one, and after --no-place the can is attached. Detaching puts
+        ATTACHED one, and after --pick the can is attached. Detaching puts
         it back into the world, where remove() then takes it.
         """
         world, attached = self.mc.object_ids()
@@ -707,18 +712,48 @@ class PickPlace(Node):
     # ------------------------------------------------------------------ place
 
     def place(self, state='over_trash'):
-        """Release whatever is held over the named drop pose."""
-        if self.held is None:
+        """Release whatever is held over the named drop pose.
+
+        What is being carried is read from the PLANNING SCENE when this process
+        did not do the picking -- which is the whole of `--place`. self.held
+        only ever records what this process attached, and a --pick run ends
+        in a different process from the one that finishes the job; the scene is
+        where that state actually lives. Detaching an object nobody remembers is
+        the difference between placing it and leaving it welded to the gripper
+        for every plan that follows.
+        """
+        held = [self.held.name] if self.held is not None else []
+        adopted = not held
+        if adopted:
+            _world, held = self.mc.object_ids()
+            if len(held) > 1:
+                # One gripper, so this is a scene left in a state no pick
+                # produces. Release them all rather than pick a favourite.
+                self.get_logger().warn('%d objects attached: %s'
+                                       % (len(held), ', '.join(held)))
+            for name in held:
+                self.get_logger().info('placing %r, attached by an earlier run'
+                                       % name)
+        if not held:
             self.get_logger().warn('place() with nothing held -- releasing anyway')
+
         self.mc.move_named(state)
         self.mc.open_gripper()
-        if self.held is not None:
-            self.mc.detach(self.held.name)
-            self.mc.remove(self.held.name)
-            self.markers.hide(self.held)
+        for name in held:
+            self.mc.detach(name)
+            self.mc.remove(name)
+        if held:
+            if adopted:
+                # Marker ids are per process and handed out in first-drawn
+                # order, so hide() here would delete whichever marker happens to
+                # share the id. DELETEALL needs no ids -- see markers.clear.
+                self.markers.clear()
+            else:
+                self.markers.hide(self.held)
             self.held = None
         self.mc.move_named('carry')
-        self.get_logger().info('placed')
+        self.get_logger().info('placed%s'
+                               % (' ' + ', '.join(held) if held else ''))
 
     # ------------------------------------------------------------------ reset
 
@@ -853,9 +888,27 @@ def main(args=None):
                         help='with --reset, drive out blind -- no collision '
                              'checking -- if MoveIt will not plan from where '
                              'the arm is')
-    parser.add_argument('--no-place', action='store_true',
-                        help='pick and carry, but do not go on to place')
+    # The two halves, selectable separately. Neither flag runs both, which is
+    # what a bare `pick_place x y z` has always done; asking for both says the
+    # same thing the long way round.
+    parser.add_argument('--pick', action='store_true',
+                        help='pick the object up and carry it, stopping short '
+                             'of the place')
+    parser.add_argument('--place', action='store_true',
+                        help='place what the gripper is already holding, '
+                             'without picking anything first')
     cli = parser.parse_args(remove_ros_args(sys.argv)[1:])
+
+    do_pick = cli.pick or not cli.place
+    do_place = cli.place or not cli.pick
+
+    # Settled before rclpy.init, so a contradictory command line costs nothing.
+    if not do_pick and (cli.x is not None or cli.y is not None
+                        or cli.z is not None):
+        print('--place on its own takes no coordinates: it places what the '
+              'gripper is already holding, wherever that came from. Add '
+              '--pick to do both halves.', file=sys.stderr)
+        return 2
 
     rclpy.init(args=args)
     node = PickPlace()
@@ -865,6 +918,8 @@ def main(args=None):
             status = 0 if node.check_states() else 1
         elif cli.reset:
             node.reset(cli.reset, force=cli.force)
+        elif not do_pick:
+            node.place()
         elif cli.x is None or cli.y is None or cli.z is None:
             parser.print_usage(sys.stderr)
             node.get_logger().error('give an object position: x y z (metres, '
@@ -875,7 +930,7 @@ def main(args=None):
                            plan_only=cli.plan_only)
             if cli.plan_only:
                 status = 0 if ok else 1
-            elif not cli.no_place:
+            elif do_place:
                 node.place()
     except (MoveItError, graspable.ObjectError, gripper.GripperError) as exc:
         node.get_logger().error(str(exc))

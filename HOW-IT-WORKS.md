@@ -251,7 +251,7 @@ loads up, but the object stops the jaws at its own width. Check
 search: the sweep collision-checks each candidate against the live scene, and a
 grasp puts the jaws around the object, so a leftover copy rejects every
 candidate. Leftovers are the normal case — `--plan-only` deliberately leaves the
-object standing, `--no-place` ends with it attached, and any failed run leaves it
+object standing, `--pick` ends with it attached, and any failed run leaves it
 wherever it got to. The scene is read before anything is deleted, because
 `detach`/`remove` are not no-ops on an absent object. Detach before remove:
 removing a *world* object doesn't touch an *attached* one.

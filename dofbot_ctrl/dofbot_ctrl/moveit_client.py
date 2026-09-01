@@ -143,8 +143,8 @@ BRIDGE_OPEN_TIME = 'open_time_ms'
 # offset is not worth carrying in a named pose.
 #
 # 'carry' and 'over_trash' sit within 0.07 rad of the same phi: a held object
-# keeps the tilt it was grasped at, so moving between them yaws and translates
-# the load without tipping it.
+# keeps the tilt it was grasped at, so moving between them translates the load
+# without tipping it. Both are on-axis, so that move no longer yaws it either.
 NAMED_STATES = {
     #                theta1  theta2   theta3   theta4  theta5
     'up':         (0.0,     0.0,     0.0,     0.0,    0.0),
@@ -157,10 +157,16 @@ NAMED_STATES = {
     'ready':      (0.0,    -0.7932,  1.2775,  0.5157, 0.0),
     # arm high and tucked, TCP (0.082, 0.001, 0.325) phi=1.08 -- safe to drive
     'carry':      (0.0,    -0.718,  0.840,  0.959, 0.0),
-    # release pose, TCP (0.113, 0.122, 0.334) phi=1.15, front-left and high.
-    # This one is SITE-SPECIFIC: it assumes a bin whose rim is below ~0.3 m and
-    # is within reach off the left front. Re-measure it for the actual bin.
-    'over_trash': (0.82,  0.229, -0.025,  0.942, 0.0),
+    # release pose, TCP (0.167, 0.001, 0.334) phi=1.15: straight in front and
+    # high. The measured posture off the left front, rotated on-axis -- theta1
+    # is the only joint that moved, so the height, the tilt and the joint room
+    # are the ones that were measured on the arm.
+    #
+    # A PLACEHOLDER FOR A DETECTED BIN, not a surveyed one. It assumes a rim
+    # below ~0.3 m, 0.167 m out in front, which is barely past the chassis; the
+    # bin's real position is to come from perception, and place() will take
+    # coordinates the way pick() does. Until then this is where it drops.
+    'over_trash': (0.0,   0.229, -0.025,  0.942, 0.0),
 }
 
 
