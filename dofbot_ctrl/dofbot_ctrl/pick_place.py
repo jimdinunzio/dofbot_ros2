@@ -5,21 +5,25 @@ Pick and place, driven by coordinates rather than by RViz.
 
     # a soda can standing on the floor: (x, y, z) is its CENTRE, so z is half
     # the catalogue height. The extensions want it further out than the stock
-    # jaws did -- see the reach note below.
-    ros2 run dofbot_ctrl pick_place -- 0.30 0.0 0.061
-    # solve and collision-check the whole sequence without moving. Leaves the
-    # can standing in the planning scene and drawn in RViz, so this is also how
-    # you park a target to look at it.
+    # jaws did -- see the reach note below. --pick ends holding it, at 'carry'
+    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.061
+    # then, whenever the caller has decided where it goes
+    ros2 run dofbot_ctrl pick_place -- --place
+    # solve and collision-check the pick without moving. Leaves the can standing
+    # in the planning scene and drawn in RViz, so this is also how you park a
+    # target to look at it.
     ros2 run dofbot_ctrl pick_place -- --plan-only 0.30 0.0 0.061
     # the test block needs the stock jaws; the extensions cannot close on it
     DOFBOT_GRIPPER=stock ros2 run dofbot_ctrl pick_place -- \
-        --object test_block 0.22 0.0 0.015
+        --pick --object test_block 0.22 0.0 0.015
     ros2 run dofbot_ctrl pick_place -- --check-states
-    # the two halves of a pick, as separate commands: carry it, then drop it
-    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.061
-    ros2 run dofbot_ctrl pick_place -- --place
     # recover after a run that died partway: empty the scene, let go, go home
     ros2 run dofbot_ctrl pick_place -- --reset
+
+ONE HALF PER INVOCATION. There is no combined form: --pick ends with the object
+held at 'carry' and the process gone, and --place picks that up from the planning
+scene whenever the caller is ready. The pause between them is the point -- it is
+where something else decides where the object goes.
 
 `pick(x, y, z)` is the whole point of this file, and the seam the perception
 layer will attach to. (x, y, z) is the CENTRE of the object in base_link -- so
@@ -41,8 +45,8 @@ SEQUENCE
     move_named('carry')       -- THIS is what clears the floor; see min_lift
 
 then place(): over_trash -> open -> detach + remove -> carry. It reads what is
-attached from the planning scene when this process did not pick it, so the halves
-split cleanly across two `ros2 run` invocations (--pick, then --place).
+attached from the planning scene, which is what lets the halves be two separate
+`ros2 run` invocations (--pick, then --place) with no process in common.
 
 WHAT _feasible_approach ACTUALLY CHOOSES
 ----------------------------------------
@@ -888,26 +892,35 @@ def main(args=None):
                         help='with --reset, drive out blind -- no collision '
                              'checking -- if MoveIt will not plan from where '
                              'the arm is')
-    # The two halves, selectable separately. Neither flag runs both, which is
-    # what a bare `pick_place x y z` has always done; asking for both says the
-    # same thing the long way round.
-    parser.add_argument('--pick', action='store_true',
-                        help='pick the object up and carry it, stopping short '
-                             'of the place')
-    parser.add_argument('--place', action='store_true',
-                        help='place what the gripper is already holding, '
-                             'without picking anything first')
+    # One half per invocation, and one of them is required. There is no
+    # combined form: --pick leaves the object held at 'carry' and the process
+    # gone, and the pause before --place is where the caller decides where the
+    # object goes. Mutually exclusive, so argparse rejects the pair itself.
+    half = parser.add_mutually_exclusive_group()
+    half.add_argument('--pick', action='store_true',
+                      help='pick the object up and carry it, stopping short of '
+                           'the place. Needs x y z')
+    half.add_argument('--place', action='store_true',
+                      help='place what the gripper is already holding, without '
+                           'picking anything first. Takes no coordinates')
     cli = parser.parse_args(remove_ros_args(sys.argv)[1:])
 
-    do_pick = cli.pick or not cli.place
-    do_place = cli.place or not cli.pick
-
-    # Settled before rclpy.init, so a contradictory command line costs nothing.
-    if not do_pick and (cli.x is not None or cli.y is not None
-                        or cli.z is not None):
-        print('--place on its own takes no coordinates: it places what the '
-              'gripper is already holding, wherever that came from. Add '
-              '--pick to do both halves.', file=sys.stderr)
+    # All settled before rclpy.init, so a bad command line costs nothing and
+    # says what the choices are rather than starting a node to find out.
+    modes = (cli.check_states, cli.reset, cli.plan_only, cli.pick, cli.place)
+    if not any(modes):
+        parser.print_usage(sys.stderr)
+        print('give a mode: --pick x y z, --place, --plan-only x y z, --reset '
+              'or --check-states', file=sys.stderr)
+        return 2
+    if cli.place and (cli.x is not None or cli.y is not None
+                      or cli.z is not None):
+        print('--place takes no coordinates: it places what the gripper is '
+              'already holding, wherever that came from', file=sys.stderr)
+        return 2
+    if cli.plan_only and cli.place:
+        print('--plan-only is a dry run of the pick, and has nothing to say '
+              'about --place', file=sys.stderr)
         return 2
 
     rclpy.init(args=args)
@@ -918,7 +931,7 @@ def main(args=None):
             status = 0 if node.check_states() else 1
         elif cli.reset:
             node.reset(cli.reset, force=cli.force)
-        elif not do_pick:
+        elif cli.place:
             node.place()
         elif cli.x is None or cli.y is None or cli.z is None:
             parser.print_usage(sys.stderr)
@@ -930,8 +943,6 @@ def main(args=None):
                            plan_only=cli.plan_only)
             if cli.plan_only:
                 status = 0 if ok else 1
-            elif do_place:
-                node.place()
     except (MoveItError, graspable.ObjectError, gripper.GripperError) as exc:
         node.get_logger().error(str(exc))
         status = 1

@@ -23,7 +23,8 @@ then, in another terminal:
 
     ros2 run dofbot_ctrl pick_place -- --check-states
     # x y z is the object CENTRE in base_link; 0.015 is a 30 mm block on the floor
-    ros2 run dofbot_ctrl pick_place -- 0.22 0.0 0.015
+    ros2 run dofbot_ctrl pick_place -- --pick 0.22 0.0 0.015
+    ros2 run dofbot_ctrl pick_place -- --place
 
 This is dofbot_moveit's demo.launch.py plus moveit_bridge, with two nodes
 deliberately left out:
