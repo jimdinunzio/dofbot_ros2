@@ -21,6 +21,7 @@ where the tests are.
 | `place_can()` | `ros2 run dofbot_ctrl pick_place -- --place` |
 | `move_to_state(name)` | `ros2 run dofbot_ctrl move_to_state -- NAME` |
 | `reset_arm(state, force)` | `ros2 run dofbot_ctrl pick_place -- --reset STATE` |
+| `wave_arm(waves, finish, seconds)` | `ros2 run dofbot_ctrl wave_arm -- --waves N` |
 
 Plus `list_states()`, `stop()`, `tail_log()`, `get_status()`, `ping()`.
 
@@ -43,8 +44,9 @@ sudo ./install.sh                # or as a systemd unit, enabled at boot
 sudo systemctl start dofbot-arm
 ```
 
-Port 8002 by default (`DOFBOT_ARM_PORT`), so it can run alongside the old
-serial arm service on 8001 during the changeover.
+Port 8001 by default (`DOFBOT_ARM_PORT`) — the port the pre-ROS arm service
+used, and which it no longer needs. Not 8002: that belongs to
+`supervisor-service`.
 
 ## Using it
 
@@ -54,6 +56,7 @@ python3 arm_client.py enable
 python3 arm_client.py state ready
 python3 arm_client.py pick 0.22 0.0 0.033
 python3 arm_client.py place
+python3 arm_client.py wave 3                   # a greeting, then stow at init
 python3 arm_client.py reset                   # after a pick that failed partway
 python3 arm_client.py disable --park init
 python3 arm_client.py -i                     # interactive
@@ -63,7 +66,7 @@ From code:
 
 ```python
 from arm_client import ArmClient
-arm = ArmClient('http://192.168.55.1:8002/')
+arm = ArmClient('http://192.168.55.1:8001/')
 arm.enable_arm()
 if arm.pick_can(0.22, 0.0, 0.033)['ok']:
     arm.place_can()
@@ -99,6 +102,17 @@ if arm.pick_can(0.22, 0.0, 0.033)['ok']:
   is nominally straight in front of the robot and is a placeholder for a bin
   perception has yet to find; when it does, this grows the coordinates
   `pick_can()` already takes.
+- **`wave_arm()` is a gesture, not a pose command.** It plans into a raised
+  pose, sends the swings as one timed trajectory so the arm does not stop dead
+  at each end of the swing, and stows at `init`. It goes through
+  `moveit_bridge` like everything else, so the arm stays enabled and the whole
+  path is collision-checked against the live scene — a wave refuses rather than
+  sweeping through something the scene knows about.
+- **One wave takes 3 s, and `seconds` sets that pace for any wave count.** The
+  swings run well above `max_joint_speed`, deliberately: that 30 deg/s is a
+  *picking* speed, set so the servos do not trail the plan by the bridge's
+  200 ms `track_time_ms` and put the gripper somewhere the plan did not. A wave
+  has nothing to arrive at, so the same lag only softens the ends of the swing.
 - **`pick_can()` and `place_can()` are two processes.** The carried object lives
   in the planning scene between them, and that is where `--place` reads it
   from — so a server restart between the two halves is survivable, and

@@ -322,6 +322,9 @@ ros2 run dofbot_ctrl pick_place -- --place
 
 # recovery after a run that died partway: clear the scene, let go, go home
 ros2 run dofbot_ctrl pick_place -- --reset
+
+# a greeting gesture, planned and collision-checked like any other move
+ros2 run dofbot_ctrl wave_arm -- --waves 3
 ```
 
 `x y z` is the object **centre** in `base_link` — for something resting on the
@@ -376,11 +379,11 @@ same one a terminal drives.
 
 ```bash
 src/dofbot_ros2/arm_service/start_arm_server.sh      # or the systemd unit
-python3 arm_client.py --url http://192.168.55.1:8002/ pick 0.22 0.0 0.061
+python3 arm_client.py --url http://192.168.55.1:8001/ pick 0.22 0.0 0.061
 ```
 
 `enable_arm`, `disable_arm`, `pick_can`, `place_can`, `move_to_state`,
-`reset_arm`. Motion is serialized: a second request is answered `busy` rather
+`reset_arm`, `wave_arm`. Motion is serialized: a second request is answered `busy` rather
 than queued, because a queued arm command executes against a world that has
 moved on. See `arm_service/README.md`.
 

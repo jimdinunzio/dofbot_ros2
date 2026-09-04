@@ -11,6 +11,7 @@ run this file for a command line:
     python3 arm_client.py state ready
     python3 arm_client.py pick 0.22 0.0 0.033
     python3 arm_client.py place
+    python3 arm_client.py wave 3
     python3 arm_client.py reset              # after a pick that failed partway
     python3 arm_client.py disable --park init
     python3 arm_client.py -i             # interactive
@@ -31,7 +32,7 @@ import xmlrpc.client
 from typing import Any, Dict, List, Optional
 
 DEFAULT_SERVER_URL = os.environ.get('DOFBOT_ARM_URL',
-                                    'http://192.168.55.1:8002/')
+                                    'http://192.168.55.1:8001/')
 
 # Seconds. Long enough for a whole pick; short enough that a server which died
 # mid-command does not hang the caller forever.
@@ -148,6 +149,17 @@ class ArmClient:
         """
         return self._call(self._motion, 'reset_arm', str(state), bool(force))
 
+    def wave_arm(self, waves: int = 1, finish: str = '',
+                 seconds: float = 0.0) -> Dict[str, Any]:
+        """Wave hello, then stow the arm.
+
+        A greeting gesture, planned and collision-checked like any other move,
+        so the stack has to be enabled. `seconds` is how long ONE wave takes
+        (default 3), so the pace holds whatever `waves` says.
+        """
+        return self._call(self._motion, 'wave_arm', int(waves), str(finish),
+                          float(seconds))
+
     # --------------------------------------------------------------- queries
 
     def list_states(self) -> List[str]:
@@ -239,6 +251,7 @@ INTERACTIVE_HELP = """Commands:
   place                 place what the gripper is carrying
   state NAME            move to a saved state
   reset [state] [force] clear the scene, let go, go home (after a failed pick)
+  wave [N]              wave hello N times, then stow
   states                list the saved states
   status                enabled? busy? what ran last?
   log [N]               tail the launch log
@@ -286,6 +299,8 @@ def interactive(client: ArmClient):
                 show(client.disable_arm(args[0] if args else ''))
             elif cmd == 'place':
                 show(client.place_can())
+            elif cmd == 'wave':
+                show(client.wave_arm(int(args[0]) if args else 1))
             elif cmd == 'reset':
                 state = args[0] if args and args[0] != 'force' else 'ready'
                 show(client.reset_arm(state, 'force' in args))
@@ -354,6 +369,14 @@ def build_parser():
                        help='drive out blind if MoveIt will not plan from '
                             'where the arm is -- NOT collision checked')
 
+    wave = sub.add_parser('wave', help='wave hello, then stow')
+    wave.add_argument('waves', nargs='?', type=int, default=1,
+                      help='back-and-forth swings (default: %(default)s)')
+    wave.add_argument('--finish', default='',
+                      help='state to stow at afterwards (default: init)')
+    wave.add_argument('--seconds', type=float, default=0.0,
+                      help='how long ONE wave takes (default: 3)')
+
     sub.add_parser('states', help='list the saved states')
     sub.add_parser('status', help='server and stack status')
     sub.add_parser('stop', help='abort the motion in flight')
@@ -392,6 +415,9 @@ def main(argv=None):
         return 0 if show(client.move_to_state(cli.name), cli.verbose) else 1
     if cli.cmd == 'reset':
         return 0 if show(client.reset_arm(cli.state, cli.force),
+                         cli.verbose) else 1
+    if cli.cmd == 'wave':
+        return 0 if show(client.wave_arm(cli.waves, cli.finish, cli.seconds),
                          cli.verbose) else 1
     if cli.cmd == 'stop':
         return 0 if show(client.stop(), cli.verbose) else 1

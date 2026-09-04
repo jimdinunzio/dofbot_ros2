@@ -20,12 +20,13 @@ Commands:
   - place_can()             - place what is being carried
   - move_to_state(name)     - move to a named state ('ready', 'init', ...)
   - reset_arm(state)        - recover: clear the scene, let go, go home
+  - wave_arm(waves)         - wave hello, then stow
 plus list_states(), stop(), tail_log(), get_status() and ping().
 
 The arm must be enabled before any motion command; the motion commands are
 serialized, and a second one arrives back as busy rather than queueing.
 
-Server listens on 0.0.0.0:8002 by default. SIGTERM/SIGINT shut the launch down
+Server listens on 0.0.0.0:8001 by default. SIGTERM/SIGINT shut the launch down
 before exiting, so `systemctl stop` does not orphan move_group.
 """
 
@@ -44,7 +45,9 @@ from socketserver import ThreadingMixIn
 from xmlrpc.server import SimpleXMLRPCServer, SimpleXMLRPCRequestHandler
 
 DEFAULT_HOST = '0.0.0.0'
-DEFAULT_PORT = 8002
+# 8001, the port the pre-ROS arm service used and no longer needs. NOT 8002 --
+# that is supervisor-service's.
+DEFAULT_PORT = 8001
 
 # arm_service/ -> dofbot_ros2/ -> src/ -> the colcon workspace root.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -78,6 +81,11 @@ PICK_TIMEOUT = 240
 PLACE_TIMEOUT = 240
 STATE_TIMEOUT = 120
 RESET_TIMEOUT = 120
+
+# One wave is 3s of gesture, but the planned moves in and out are ordinary
+# collision-checked moves and are the slow part. Generous: this exists to stop a
+# wedged command holding the motion lock, not to bound normal operation.
+WAVE_TIMEOUT = 180
 
 # Command output is echoed back to the client. Keep the tail: MoveIt failures
 # say what went wrong on the last few lines and log banners on the first few.
@@ -548,6 +556,57 @@ class ArmService:
             args.append('--force')
         return self._run('reset_arm', args, timeout)
 
+    def wave_arm(self, waves=1, finish='', seconds=0.0,
+                 timeout=WAVE_TIMEOUT):
+        """Wave hello, then stow the arm.
+
+        Runs `ros2 run dofbot_ctrl wave_arm`: move_group plans the way into the
+        gesture, the swings themselves go to the arm controller as one timed
+        trajectory, and moveit_bridge drives the servos throughout. Like every
+        other command here it needs the arm enabled, and it is collision-checked
+        against the live planning scene -- a wave will refuse rather than sweep
+        the arm through something the scene knows about.
+
+        Args:
+            waves:   back-and-forth swings (default 1).
+            finish:  named state to stow at afterwards; '' uses the node's
+                     default ('init').
+            seconds: how long ONE wave takes, so the pace holds whatever `waves`
+                     says; 0 uses the node's default (3 s).
+        """
+        try:
+            waves = int(waves)
+            seconds = float(seconds)
+        except (TypeError, ValueError):
+            return _result(False, 'wave_arm',
+                           error='waves and seconds must be numbers')
+        if waves < 1:
+            return _result(False, 'wave_arm', error='waves must be at least 1')
+        if seconds < 0:
+            # 0 is 'use the node's default'; a negative would silently become
+            # that too, and the caller would never learn it asked for nonsense.
+            return _result(False, 'wave_arm',
+                           error='seconds cannot be negative')
+        finish = str(finish).strip()
+        if finish:
+            # Only when one was asked for: '' means the node's own default, and
+            # checking it would cost a subprocess to learn nothing.
+            states = self.list_states()
+            if states and finish not in states:
+                return _result(False, 'wave_arm',
+                               error='unknown state %r; have %s'
+                                     % (finish, ', '.join(states)))
+        blocked = self._require_enabled('wave_arm')
+        if blocked:
+            return blocked
+        args = ['ros2', 'run', 'dofbot_ctrl', 'wave_arm', '--',
+                '--waves', str(waves)]
+        if finish:
+            args += ['--finish', finish]
+        if seconds > 0:
+            args += ['--seconds', '%g' % seconds]
+        return self._run('wave_arm', args, timeout)
+
     def list_states(self):
         """The saved state names, read from the node itself and cached.
 
@@ -673,6 +732,7 @@ METHOD_HELP = [
     ('place_can()', 'Place what the gripper is carrying'),
     ('move_to_state(name)', 'Move to a saved state (ready, init, carry, ...)'),
     ('reset_arm(state, force)', 'Clear the scene, let go, go home'),
+    ('wave_arm(waves, finish, seconds)', 'Wave hello, then stow'),
     ('list_states()', 'Names move_to_state accepts'),
     ('stop()', 'Abort the motion in flight; leave the stack up'),
     ('tail_log(lines)', "Tail the launch's output"),

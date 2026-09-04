@@ -15,7 +15,7 @@ WORKSPACE="${DOFBOT_WS:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 ROS_SETUP="/opt/ros/${ROS_DISTRO:-humble}/setup.bash"
 WS_SETUP="$WORKSPACE/install/setup.bash"
 LOG_FILE="${DOFBOT_ARM_LOG:-/tmp/dofbot_arm_server.log}"
-PORT="${DOFBOT_ARM_PORT:-8002}"
+PORT="${DOFBOT_ARM_PORT:-8001}"
 
 echo "$(date): Starting DOFBOT Arm Server..." | tee -a "$LOG_FILE"
 

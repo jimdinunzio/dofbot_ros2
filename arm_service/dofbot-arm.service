@@ -14,7 +14,7 @@ Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=ROS_DISTRO=humble
 # Override the workspace, port or launch log here if needed:
 # Environment=DOFBOT_WS=/home/jim/ros2_ws
-# Environment=DOFBOT_ARM_PORT=8002
+# Environment=DOFBOT_ARM_PORT=8001
 # Environment=DOFBOT_LAUNCH_LOG=/tmp/dofbot_arm_launch.log
 
 # Graceful shutdown: the server needs long enough to bring the ROS launch down
