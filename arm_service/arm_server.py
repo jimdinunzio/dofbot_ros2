@@ -32,6 +32,7 @@ before exiting, so `systemctl stop` does not orphan move_group.
 import argparse
 import errno
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -85,10 +86,25 @@ MAX_OUTPUT = 8000
 _server = None
 _service = None
 
+# `ros2 launch` colours its output even when it is redirected to a file, and ESC
+# is not a legal XML 1.0 character -- so an un-stripped log came back as a
+# response the client could not parse at all ("not well-formed (invalid
+# token)"). Strip the sequences for readability, then drop anything else XML
+# cannot carry, because the text is whatever the nodes chose to print.
+_ANSI = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+_NOT_XML = re.compile(
+    '[^\t\n\r\u0020-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]')
+
+
+def _printable(text):
+    """Text that survives XML-RPC. See _ANSI above."""
+    return _NOT_XML.sub('', _ANSI.sub('', text))
+
 
 def _tail(text, limit=MAX_OUTPUT):
     if text is None:
         return ''
+    text = _printable(text)
     if len(text) <= limit:
         return text
     return '...[%d bytes truncated]...\n' % (len(text) - limit) + text[-limit:]
@@ -303,6 +319,7 @@ class ArmService:
                                  text=True, timeout=timeout).stdout
         except (subprocess.TimeoutExpired, OSError):
             return set()
+        out = _printable(out)
         return {line.strip() for line in out.splitlines() if line.strip()}
 
     def _wait_ready(self, wanted, timeout):
@@ -391,7 +408,10 @@ class ArmService:
                 self._launch_fh.flush()
                 self._launch = subprocess.Popen(
                     argv, stdout=self._launch_fh, stderr=subprocess.STDOUT,
-                    stdin=subprocess.DEVNULL, start_new_session=True)
+                    stdin=subprocess.DEVNULL, start_new_session=True,
+                    # Belt and braces with _printable: this keeps the escapes
+                    # out of the log file too, where they are just noise.
+                    env=dict(os.environ, RCUTILS_COLORIZED_OUTPUT='0'))
             except OSError as exc:
                 self._launch = None
                 return _result(False, 'enable_arm',
@@ -547,7 +567,7 @@ class ArmService:
         except (subprocess.TimeoutExpired, OSError):
             return []
         names = []
-        for line in out.splitlines():
+        for line in _printable(out).splitlines():
             fields = line.split()
             # The first column is the state name; the header row starts with
             # the literal 'state', and every other column is a number.
