@@ -21,6 +21,12 @@
   <exec_depend>dofbot_moveit</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>dofbot_arm_lib</exec_depend>
+  <!-- vision.py: frame grab and JPEG encode for the wrist-camera checks.
+       The detector itself is nanoOWL, out of process and off this list.
+       NOTE: no double hyphen anywhere in an XML comment; it is illegal, and
+       colcon answers by dropping this package's AMENT_PREFIX_PATH hook, which
+       makes every `ros2 run dofbot_ctrl ...` fail with "package not found". -->
+  <exec_depend>python3-opencv</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>urdf_launch</exec_depend>
   <exec_depend>dofbot_description</exec_depend>

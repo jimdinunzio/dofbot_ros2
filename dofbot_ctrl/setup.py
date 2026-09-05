@@ -36,6 +36,8 @@ setup(
             'move_to_state = dofbot_ctrl.move_to_state:main',
             'chassis_collision = dofbot_ctrl.chassis_collision:main',
             'pick_place = dofbot_ctrl.pick_place:main',
+            'vision_check = dofbot_ctrl.vision_check:main',
+            'calibrate_view = dofbot_ctrl.calibrate_view:main',
             'wave_arm = dofbot_ctrl.wave_arm:main',
             'measure_bus = dofbot_ctrl.tuning.measure_bus:main',
             'measure_tracking = dofbot_ctrl.tuning.measure_tracking:main',
