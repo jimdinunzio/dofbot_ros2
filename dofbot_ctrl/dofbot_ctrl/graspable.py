@@ -60,6 +60,14 @@ class GraspableObject:
                 None (the default) means gripper.DEFAULT_SQUEEZE, resolved at
                 grasp time so it follows a profile swap; a number here is a
                 grip that has been tuned on THIS object on hardware
+    vision_label what to show an open-vocabulary detector when asking whether
+                this object is in view, e.g. 'a soda can'. None derives it from
+                the catalogue name, which is already an English description of
+                the thing -- 'soda_can' asks about 'a soda can'. Set it when
+                the name is an identifier rather than a description, or when a
+                different wording detects better; the label is a PROMPT and
+                what works is a measured fact, not a naming preference. See
+                vision.label_for.
     mesh        optional package:// URI of a Z-UP mesh to DRAW the object as.
                 Purely cosmetic -- collision still uses `shape` -- and it is
                 scaled to the fields above rather than trusted at its modelled
@@ -79,6 +87,7 @@ class GraspableObject:
     grasp_height_range: tuple = None
     symmetric: bool = False
     squeeze: float = None
+    vision_label: str = field(default=None, compare=False)
     mesh: str = field(default=None, compare=False)
     note: str = field(default='', compare=False)
 
