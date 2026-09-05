@@ -52,9 +52,9 @@
       z_bottom:=0.003
       floor_z_top:=${-ground_drop}
       floor_thickness:=0.005
-      floor_x_front:=0.35
+      floor_x_front:=0.45
       floor_x_back:=-0.5
-      floor_half_width:=0.35">
+      floor_half_width:=0.45">
 
     <material name="chassis_orange">
       <color rgba="0.90 0.45 0.10 0.55"/>
