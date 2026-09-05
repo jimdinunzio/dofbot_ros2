@@ -54,7 +54,7 @@ used, and which it no longer needs. Not 8002: that belongs to
 python3 arm_client.py status
 python3 arm_client.py enable
 python3 arm_client.py state ready
-python3 arm_client.py pick 0.22 0.0 0.033
+python3 arm_client.py pick 0.30 0.0 0.039
 python3 arm_client.py place
 python3 arm_client.py wave 3                   # a greeting, then stow at init
 python3 arm_client.py reset                   # after a pick that failed partway
@@ -68,15 +68,69 @@ From code:
 from arm_client import ArmClient
 arm = ArmClient('http://192.168.55.1:8001/')
 arm.enable_arm()
-if arm.pick_can(0.22, 0.0, 0.033)['ok']:
+if arm.pick_can(0.30, 0.0, 0.039)['ok']:
     arm.place_can()
 ```
+
+## Where to put the robot
+
+`pick_can()` takes the object where it is; it does not drive. Whoever does drive
+gets to choose where the can ends up relative to the arm, and that choice decides
+whether the pick is comfortable or knife-edge. **Aim for 0.30 m.**
+
+```python
+GRASP_STANDOFF = 0.30    # drive until the object sits here, base_link x
+ARM_MIN_REACH  = 0.24    # closer than this, reposition rather than reach
+ARM_MAX_REACH  = 0.36    # further than this, drive in
+ARM_MAX_YAW    = 100.0   # degrees off centre, either side
+```
+
+**Test the radius, `hypot(x, y)`, not x.** The arm is rotationally symmetric
+about its base yaw, so a can at (0.24, 0.20) is 0.31 m out and is a good target;
+an x-only test reads it as too close and drives away from a comfortable pick.
+
+Measured offline against the same pitch/standoff/height search `pick_place`
+runs, soda can, extended fingers, carpet:
+
+| object x | what the pick gets |
+|---|---|
+| < 0.20 | nothing solves at any pitch |
+| 0.20–0.23 | solves, but off the proven grip height, standoff down to its 20 mm floor, under 0.05 rad of joint margin |
+| 0.24–0.27 | works; standoff climbing 45 → 80 mm |
+| **0.28–0.32** | **the sweet spot** — full 80 mm standoff, the 80 mm grip height proven on hardware, `grasp_pitch` landing on its preferred 2.2, > 0.12 rad of margin, and 20–50 mm of Cartesian lift |
+| 0.33–0.36 | still full standoff and full margin, but no straight-up lift left; `move_named('carry')` does the clearing |
+| 0.37–0.39 | degrades into shallow-pitch side grabs at a 20–45 mm standoff |
+| ≥ 0.40 | nothing solves at any pitch |
+
+**The near edge is the one that bites, and it bites suddenly.** A ±25 mm base
+error either side of 0.30 stays inside the sweet spot; the same error from 0.22
+lands at 0.195, where nothing solves. That asymmetry is why `GRASP_STANDOFF`
+sits mid-band rather than at the closest workable distance — closer is not
+safer here. See ARCHITECTURE.md, "The approach sweep": the standoff pose is the
+grasp pulled *back along the tool axis*, which at a steep pitch is up and
+**inward**, so it runs out before the reach does.
+
+**Yaw is nearly free.** Nothing degrades out to 90°; margin falls to 0.14 rad at
+100° and 0.06 at 105°, and 110° is past `arm1_Joint`'s stop. The chassis is not
+what limits it — the arm's closest approach to the chassis cylinder is the
+shoulder, at a fixed 60 mm, and swinging sideways only opens that up. 100° is
+the gate; prefer to turn the base anyway, since a square approach costs one
+cheap rotation.
+
+**These numbers are for the EXTENDED fingers.** They move the whole working ring
+outward. On the stock jaws with the 30 mm test block the same sweep gives a band
+of 0.13–0.31 and a sweet spot of 0.20–0.29 — different constants entirely, so
+anything that hard-codes the values above has to read `DOFBOT_GRIPPER` the way
+`gripper.py` and `dofbot.urdf` both do.
 
 ## Things worth knowing
 
 - **x, y, z is the object's CENTRE in `base_link`, in metres** — for something
-  on the floor that is half its height, not zero. Same convention as
-  `pick_place` itself.
+  standing on the floor that is the floor height plus half the object's HEIGHT,
+  not half its width and not zero. Same convention as `pick_place` itself. An
+  upright 122 mm can on office carpet is `z = -0.022 + 0.061 = 0.039`; on a hard
+  floor `-0.026 + 0.061 = 0.035`. Both ground figures are measured, and which
+  one applies is what `DOFBOT_FLOOR` selects (see `chassis.xacro`).
 - **The arm must be enabled first.** Motion commands do not auto-enable; being
   explicit is what stops a stray call from starting a stack nobody expected.
 - **One motion at a time.** A second request comes back `busy` rather than

@@ -136,10 +136,17 @@ off everything inside 0.263 m. The reason is not obvious: the standoff pose is
 the grasp pulled *back along the tool axis*, and at phi ≈ 2.2 that direction is
 up and **inward**, into the same fold-up limit. So the standoff runs out before
 the grasp does, and the target that will not solve is the one too **close**.
-Measured, the can's band is 0.20–0.38 m and the near edge is set by the
+Measured, the can's band is 0.20–0.39 m and the near edge is set by the
 `min_standoff` floor — a policy choice about how short an approach is acceptable,
 since that final straight line is what makes the jaws slide over the object
 instead of swinging into it.
+
+**Being inside the band is not the same as being in a good place in it.** Only
+0.28–0.32 m gets the full 80 mm standoff, the 80 mm grip height proven on
+hardware, `grasp_pitch` on its preferred 2.2 and over 0.12 rad of joint margin
+at once; 0.20–0.23 solves with none of them. Whoever drives the base should aim
+for 0.30 — see `arm_service/README.md`, "Where to put the robot", for the whole
+band and the constants that gate it.
 
 **Ranked, not first-fit.** Candidates are scored on how much room the tightest
 joint has left (`_joint_margin`) and on the standoff they support, because near
@@ -311,13 +318,13 @@ ros2 launch dofbot_ctrl pick_place.launch.py
 
 # then, in another terminal
 ros2 run dofbot_ctrl pick_place -- --check-states
-ros2 run dofbot_ctrl pick_place -- --plan-only 0.22 0.0 0.061
+ros2 run dofbot_ctrl pick_place -- --plan-only 0.30 0.0 0.039
 
 # one half per invocation, and one of --pick/--place is required. --pick ends
 # holding the object at 'carry'; what is being carried lives in the planning
 # scene until --place, so the two share no process and the pause between them
 # is where the caller decides where the object goes
-ros2 run dofbot_ctrl pick_place -- --pick 0.22 0.0 0.061   # can centre, on the floor
+ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.039   # upright can on carpet
 ros2 run dofbot_ctrl pick_place -- --place
 
 # recovery after a run that died partway: clear the scene, let go, go home
@@ -379,7 +386,7 @@ same one a terminal drives.
 
 ```bash
 src/dofbot_ros2/arm_service/start_arm_server.sh      # or the systemd unit
-python3 arm_client.py --url http://192.168.55.1:8001/ pick 0.22 0.0 0.061
+python3 arm_client.py --url http://192.168.55.1:8001/ pick 0.30 0.0 0.039
 ```
 
 `enable_arm`, `disable_arm`, `pick_can`, `place_can`, `move_to_state`,

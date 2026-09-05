@@ -9,7 +9,7 @@ run this file for a command line:
     python3 arm_client.py status
     python3 arm_client.py enable
     python3 arm_client.py state ready
-    python3 arm_client.py pick 0.22 0.0 0.033
+    python3 arm_client.py pick 0.30 0.0 0.039
     python3 arm_client.py place
     python3 arm_client.py wave 3
     python3 arm_client.py reset              # after a pick that failed partway
