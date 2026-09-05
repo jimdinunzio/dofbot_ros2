@@ -38,11 +38,20 @@ SEQUENCE
     move_named('ready') + open_gripper
     move_pose  to a pre-grasp standoff back along the tool axis  (OMPL plans it)
                -- as long a standoff as the arm has room for, measured
+    LOOK: is the object where we were told?          (vision.py; --no-vision)
     cartesian_move straight in to the grasp                      (we plan it)
     close_gripper to the object's grasp width
     attach, with every end-effector link named as a touch link
     cartesian_move straight up, as far as the arm has room for (may be nothing)
     move_named('carry')       -- THIS is what clears the floor; see min_lift
+    LOOK: did it come with us?                       (vision.py; --no-vision)
+
+The two LOOKs ask the wrist camera through nanoOWL and abort the pick when the
+answer is a definite no. They need no camera calibration: the can in the jaws
+is the largest box in frame because it is nearest the lens, and the can being
+approached is the one nearest the image centre because that is where the arm is
+pointed. When the question cannot be asked at all -- no detector running, a
+dark frame -- they say so and the pick carries on. See vision.py.
 
 then place(): over_trash -> open -> detach + remove -> carry. It reads what is
 attached from the planning scene, which is what lets the halves be two separate
@@ -149,10 +158,12 @@ from math import atan2, degrees, hypot, pi
 
 import rclpy
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.utilities import remove_ros_args
 
 from dofbot_ctrl import dofbot_kinematics as kin
 from dofbot_ctrl import graspable, gripper, scene_markers, scene_objects
+from dofbot_ctrl import vision
 from dofbot_ctrl.moveit_client import (GRIPPER_LINKS, NAMED_STATES,
                                        DofbotMoveIt, MoveItError)
 
@@ -247,6 +258,14 @@ class PickPlace(Node):
         # there is nothing left
         # to absorb the error in where the object actually is.
         self.declare_parameter('min_margin', 0.02)
+        # Confirm the pick with the wrist camera: once at the standoff that
+        # the object is where it was said to be, once at carry that it came
+        # with us. See vision.py -- a check that cannot be asked (no detector
+        # running, no light) is not a failure and does not stop a pick, so a
+        # machine with the GPU busy elsewhere picks exactly as it always did.
+        # Turn it off to pick against a scene the camera cannot see, such as a
+        # bench test with the arm off the robot.
+        self.declare_parameter('vision', True)
 
         self.mc = DofbotMoveIt(self)
         # Cosmetic only. Every call below sits next to the scene_objects call it
@@ -593,6 +612,34 @@ class PickPlace(Node):
         self.mc.allow_collisions(obj.name, GRIPPER_LINKS, False)
         self.markers.hide(obj)
 
+    def _confirm(self, check, obj):
+        """Ask the wrist camera about `obj`, and raise only if it says no.
+
+        THE THREE ANSWERS ARE NOT TWO. PRESENT is logged and passed; ABSENT
+        raises, because the camera had a good look and the object was not
+        there; UNKNOWN warns and passes, because the question could not be
+        asked at all -- nanoOWL running something else, a dark frame.
+        Folding UNKNOWN into ABSENT would make the
+        GPU service a hard dependency of every pick, and vision here is a
+        confirmation added to the sequence, not a new prerequisite for it.
+
+        Returns the Sighting so a caller can report it; None when the check is
+        switched off.
+        """
+        if not self.get_parameter('vision').value:
+            return None
+        sighting = (vision.approach(obj) if check == 'approach'
+                    else vision.held(obj))
+        line = vision.describe(sighting)
+        if sighting.verdict == vision.PRESENT:
+            self.get_logger().info(line)
+        elif sighting.verdict == vision.UNKNOWN:
+            self.get_logger().warn(line)
+        else:
+            self.get_logger().error(line)
+            raise vision.VisionError(line)
+        return sighting
+
     def pick(self, x, y, z, name=None, plan_only=False):
         """Pick the object whose CENTRE is at (x, y, z) in base_link."""
         obj = self._object(name)
@@ -654,6 +701,21 @@ class PickPlace(Node):
         self.mc.allow_collisions(obj.name, GRIPPER_LINKS, True)
 
         self.mc.move_pose(*pre)
+
+        # The last point at which nothing has been touched. From here the arm
+        # slides the open jaws over the object and closes them, and it does
+        # that whether or not the object is really there.
+        try:
+            self._confirm('approach', obj)
+        except vision.VisionError:
+            # Nothing is grasped and nothing is attached, so the only state to
+            # undo is the allowance made two lines above -- put it back and the
+            # scene is what _clear() expects to find next time. The object
+            # stays in the scene and drawn on purpose: where the pick thought
+            # it was is the first thing worth looking at.
+            self.mc.allow_collisions(obj.name, GRIPPER_LINKS, False)
+            raise
+
         self.mc.cartesian_move(grasp)
 
         self.mc.set_gripper(obj.grip_angle())
@@ -682,6 +744,19 @@ class PickPlace(Node):
                 'no straight-up lift available from this grasp; going straight '
                 'to carry, which raises the object on its own')
         self.mc.move_named('carry')
+
+        # At carry, not after the lift. The lift ends wherever the arm had room
+        # for it, which is a different pose on every pick; carry is one fixed
+        # posture, which is the whole reason a fixed pixel rectangle can say
+        # where a held object has to appear.
+        #
+        # An ABSENT here raises with the object still ATTACHED in the scene,
+        # and that is correct: this process cannot tell a dropped can from a
+        # detector that misread one, and detaching on a maybe would leave the
+        # scene claiming the floor is clear when a can is lying on it.
+        # reset_arm() is the way out, and it drops what is held where it is.
+        self._confirm('held', obj)
+
         self.get_logger().info('picked %s' % obj.name)
         return obj
 
@@ -888,6 +963,11 @@ def main(args=None):
                         metavar='STATE',
                         help='recovery: empty the planning scene, open the '
                              'gripper and move to STATE (default ready)')
+    parser.add_argument('--no-vision', action='store_true',
+                        help='do not confirm the pick with the wrist camera. '
+                             'The checks already pass themselves when they '
+                             'cannot be asked, so this is for picking against '
+                             'a scene the camera deliberately cannot see')
     parser.add_argument('--force', action='store_true',
                         help='with --reset, drive out blind -- no collision '
                              'checking -- if MoveIt will not plan from where '
@@ -925,6 +1005,8 @@ def main(args=None):
 
     rclpy.init(args=args)
     node = PickPlace()
+    if cli.no_vision:
+        node.set_parameters([Parameter('vision', Parameter.Type.BOOL, False)])
     status = 0
     try:
         if cli.check_states:
@@ -943,7 +1025,8 @@ def main(args=None):
                            plan_only=cli.plan_only)
             if cli.plan_only:
                 status = 0 if ok else 1
-    except (MoveItError, graspable.ObjectError, gripper.GripperError) as exc:
+    except (MoveItError, graspable.ObjectError, gripper.GripperError,
+            vision.VisionError) as exc:
         node.get_logger().error(str(exc))
         status = 1
     except KeyboardInterrupt:
