@@ -17,7 +17,9 @@ works because the arm's kinematics are solved in closed form in pure Python
 rather than handed to MoveIt as a pose goal, which lets the whole sequence be
 parameterised as *position + tool pitch* — five numbers for five joints. MoveIt
 still does collision-aware planning for the long transits, and still owns the
-planning scene. Perception will eventually plug in by calling `pick()`.
+planning scene. Perception will eventually plug in by calling `pick()`. The wrist
+camera now looks twice inside that sequence — at the standoff and at carry —
+and can abort it, but only ever on a definite no; see Seeing the pick.
 
 ---
 
@@ -43,6 +45,7 @@ joint_map.py         servo degrees <-> URDF radians. Zero offsets, signs, grippe
 dofbot_kinematics.py closed-form FK/IK. Pure math, no ROS. The foundation.
 gripper.py           jaw model: opening <-> angle, and where the fingers actually grip.
 graspable.py         object catalogue. Dimensions, grasp width, grip height.
+vision.py            wrist camera -> nanoOWL. present / absent / unknown.
 scene_objects.py     catalogue object -> planning-scene geometry + held pose.
 scene_markers.py     catalogue object -> RViz mesh marker. Visual only.
 moveit_client.py     DofbotMoveIt: all ROS interaction with move_group + controllers.
@@ -57,6 +60,8 @@ moveit_bridge.py       /joint_states -> servos           (drives the arm)
 serial_port.py         who else has /dev/ttyTHS1 open. Shared diagnostic.
 gui_teleop.py          manual jogging
 calibrate_zero.py      per-servo zero offsets by encoder read
+calibrate_view.py      the two camera gates, read off a real frame
+vision_check.py        one camera question, answered on stdout; arm_server runs it
 chassis_collision.py   SUPERSEDED — chassis/floor are real URDF links now
 ```
 
@@ -166,6 +171,165 @@ taking when available and not worth failing a pick over.
 
 ---
 
+## Seeing the pick
+
+The sequence is otherwise blind. It is told where the object is, plans a grasp
+to that coordinate, and closes the jaws whether or not anything is there. Two
+camera checks confirm it: one at the pre-grasp standoff — *is the object where
+I was told?* — and one at carry — *did it come with me?*
+
+**The camera is the one on the wrist.** `Camera_Link` hangs off `arm4_Link`, so
+it moves with the arm and looks past the jaws. It is a 640×480 UVC camera and
+the only camera on this machine; the Oak-D in the Frames section is on the
+chassis, wired to the robot's brain, and is not here.
+
+### Three answers, and the third one is the point
+
+| verdict | meaning | what a pick does |
+|---|---|---|
+| `present` | seen, where it has to be | carries on |
+| `absent` | the view was good and it was **not** there | **aborts** |
+| `unknown` | the question could not be asked | carries on, and says so |
+
+`unknown` covers nanoOWL running something else and a dark frame. It is
+deliberately not folded into `absent`: an unanswerable question is not a
+negative answer, and treating it as one would make the GPU service a hard
+dependency of every pick. **Vision is a confirmation added to the sequence,
+never a prerequisite for it.**
+
+### The camera cannot see its own grip point
+
+**Measured 2026-09-05, and it is the thing standing in the way.** With a can in
+the jaws, only the lid and the top centimetre or two reach the bottom edge of
+the frame; no part of the gripper is visible; and nanoOWL detects nothing for
+any wording — `a soda can`, `a coke can`, `a drink can`, `a beverage can`,
+`the top of a soda can` all return nothing. Only `a red object` fires, at 0.12,
+on the sliver that is visible. The detector itself is fine: `a picture frame`
+scores 0.61 on the picture behind the arm, in 60 ms.
+
+The URDF says why. In `arm4_Link`'s frame, z is the tool axis:
+
+| joint | | xyz |
+|---|---|---|
+| `Camera_Joint` | arm4 → `Camera_Link` | −0.0481, 0, 0.0707 |
+| `arm5_Joint` | arm4 → `arm5_Link` | −0.00215, 0, 0.078149 |
+| `Gripping_Joint` | arm5 → grip point | z 0.068091 |
+
+From the camera the grip point lies **43.3 mm sideways and 75.5 mm along the
+tool axis — 29.8° off the camera's own mounting axis.** The horizontal field is
+about 63° (estimated from the 66 mm can filling 66% of the frame width at that
+range), putting the vertical half-angle near 25°. **The grip point sits roughly
+five degrees outside the frame.** The camera is mounted parallel to the tool
+axis, offset to one side, and never toes back in.
+
+**No arm pose fixes it, and no ROI would either.** `arm5_Joint` is revolute
+about z — the tool axis itself — and the grip point is 2.65 mm off that axis,
+so rolling the wrist spins the jaws in place and moves nothing in the image.
+The gripper projects to the same region of the frame in *every* posture the arm
+can strike. That invariance is exactly what would make a fixed pixel rectangle
+a sound rule; the trouble is the region is off the bottom of the sensor, and a
+rectangle cannot filter detections that were never made.
+
+The approach check is different, because **angle falls with range** — the same
+43.3 mm offset subtends less the further down the tool axis the target sits:
+
+| standoff | range | off-axis | |
+|---|---|---|---|
+| 0 mm | 75.5 mm | 29.8° | the grasp itself — outside the frame |
+| 20 mm | 95.5 mm | 24.4° | at the edge |
+| 40 mm | 115.5 mm | 20.5° | inside |
+| 80 mm | 155.5 mm | 15.6° | comfortably inside |
+
+So `approach` sees its subject comfortably, and `held` — which asks about the
+grip point — sees only a sliver. **That is why `held` is a classification and
+`approach` is a detection**, and it is the whole reason the two checks are not
+the same mechanism. Aiming the camera down and inward by ten or fifteen degrees
+would let both be detections, but it is a hardware change and nothing currently
+needs it.
+
+### The two checks work differently, and have to
+
+| check | asks | how |
+|---|---|---|
+| `approach` | is the object where I was told? | **detection** — `[a soda can]`, take the box nearest the image centre |
+| `held` | did it come with me? | **classification** — `(an empty gripper, a gripper holding a soda can)` |
+
+`approach` is a detection because at a standoff the target is 15–25° off axis
+and fully in frame: measured, a can on the floor detects at **0.797**. Of the
+cans in view it takes the one **nearest the image centre**, because that is
+where the arm is pointed; others sit off to the sides. No calibration needed.
+
+`held` cannot be a detection — the held can is a truncated sliver at the bottom
+edge and detection returns nothing for it under any wording. Classification
+needs no detectable object, and measured on the sliver it returns **0.992
+holding / 0.927 empty**.
+
+**The held check requires a pose with no floor in frame, and `carry` is one** —
+it points the tool well up, so the only can that can appear is the one being
+held. That is what makes the question answerable, because classification reads
+the *whole picture* and cannot tell a can in the jaws from one lying behind it:
+measured, one in view reads as held at **1.000**. Designing the scene out beats
+arguing with it, and it costs nothing, because **raising the arm does not move
+the held can in the image** (camera and jaws are rigidly linked) — only the
+background moves.
+
+**So the answer is meaningful at `carry` and nowhere else.** The pick sequence
+asks there. `is_holding()` can be called at any moment from any pose, and asked
+at `ready` over a littered floor it will report `held` at 1.000 with empty
+jaws — not a degraded answer, a confident wrong one.
+
+`CLASSIFY_MIN_SCORE` (0.70) is the one floor: a classification **always**
+returns a winner, so below it the answer is `unknown` rather than a verdict.
+
+### Wording a classification prompt — three rules, each bought by a wrong answer
+
+1. **The alternatives must cover the whole space, absence included.** `(a small
+   can, a huge can)` calls an empty frame "a small can" at 0.79.
+2. **They must differ only in the thing being asked about.** Any alternative
+   that also describes the *scene* gets won by the scene: every pairing
+   containing "a can on the floor" was a constant — all three frames are of a
+   floor — and it took the **empty** one at 0.994.
+3. **A prompt that is right on the frame you tried it on is not yet evidence.**
+   Half the wordings tried were constants or inversions that read perfectly
+   sensibly. `(a whole can, a cut off can)` called the truncated held can "a
+   whole can" at 0.991.
+
+Negation is weak wording besides: `(no soda can, soda can)` gets its negative at
+**0.527**, a coin flip in a two-way softmax, because CLIP embeds a negated noun
+close to the noun.
+
+### The detector is nanoOWL, and it is already running
+
+`nano-owl-service` (XML-RPC, port 8000, `nano_owl.service`) is an
+open-vocabulary detector on this machine. Nothing in `dofbot_ctrl` loads a
+model or touches the GPU. Two facts make it usable from here:
+
+- **It is started in `network` frame-source mode**, so it opens no camera of
+  its own. `/dev/video0` stays ours to open. (The older `tree_demo.py` grabs
+  the camera *and* returns only annotated JPEGs, with the detections drawn on
+  and then discarded — it cannot answer this question at all.)
+- **It answers with structured boxes**, and `get_detections()` reports the
+  `frame_seq` of the frame it ran on.
+
+It is shared with the robot's brain, which uses it to *find* cans through the
+Oak-D. The server holds **one prompt and one latest-detection slot, globally**,
+so two things keep the uses from reading each other's answers: every pushed
+frame carries a sequence number seeded from the clock, and we poll until *ours*
+comes back; and the previous prompt is read before ours is set and put back
+afterwards. Neither makes concurrent use safe — the server has no notion of a
+session — and neither is meant to. Concurrency is not expected: the brain finds
+a can and the arm then picks it, in that order.
+
+### Asking from outside
+
+`arm_server.is_holding()` runs `vision_check` and returns `held` as
+**True / False / None**, the same three answers. `ok` says whether the question
+was *asked*, not what the answer was — a can that is not there is a successful
+query. It needs no `move_group`, so it answers whether or not the arm is
+enabled.
+
+---
+
 ## The two grippers
 
 **The arm has two gripper configurations and they physically swap.** Bolt-on
@@ -212,6 +376,17 @@ This distinction has caused more trouble than anything else in the project.
 - `Z0` = 107.5 mm. **This arm's standoffs are exactly 18 mm shorter than
   Yahboom's CAD**, so it differs from every shipped URDF. Shorter is *better*
   here — raising the shoulder buys height but costs floor radius.
+
+- The camera's field of view — **estimated, not measured**: about 63°
+  horizontal, from the 66 mm can filling 66% of the frame width at a known
+  range in one frame. Good enough to explain why the grip point is out of
+  shot; not good enough to compute with.
+- `vision.APPROACH_MAX_OFFSET` — **not yet measured**. There is nothing to
+  derive it from either: `Camera_Link`'s URDF
+  pose gives the camera body's mounting, not the lens direction or the field of
+  view, and the camera has no intrinsics. Both are `None`, which is *off*, not
+  broken — the checks fall back to "is one in view at all". `calibrate_view`
+  reads them off a frame.
 
 **Legitimately derived from the URDF:**
 
@@ -332,6 +507,10 @@ ros2 run dofbot_ctrl pick_place -- --reset
 
 # a greeting gesture, planned and collision-checked like any other move
 ros2 run dofbot_ctrl wave_arm -- --waves 3
+
+# needs no launch and no move_group, only the wrist camera and nanoOWL beside it
+ros2 run dofbot_ctrl vision_check -- --held
+ros2 run dofbot_ctrl calibrate_view -- --detect --shot /tmp/view.png
 ```
 
 `x y z` is the object **centre** in `base_link` — for something resting on the
@@ -422,6 +601,15 @@ moved on. See `arm_service/README.md`.
 - **The place target is a fixed pose, not a found one.** `over_trash` drops
   straight in front at 0.167 m; nothing looks for the bin, and `place()` takes
   no coordinates. This is the next thing perception plugs into after `pick()`.
+- **The held numbers were measured at a pose with floor in view, not at
+  `carry`.** Carry's background is plainer, which should only help, but the
+  holding/empty pair wants re-shooting there before 0.99/0.93 are quoted as
+  carry's figures.
+- **`APPROACH_MAX_OFFSET` is unset**, so the approach check accepts a can
+  anywhere in frame rather than only near where the arm is pointed. It needs
+  a real standoff frame first; `MIN_SCORE` wants tuning on the same frames.
+- **The classification numbers are one frame per state.** Decisive as far as
+  they go, but they want repeating across lighting and can placements.
 - **Execution is open-loop.** MoveIt believes the mock joints, not the encoders.
   A stalled or blocked servo goes undetected. Whether to change that is an open
   question, now being answered by measurement rather than by argument — see
