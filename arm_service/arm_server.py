@@ -21,7 +21,12 @@ Commands:
   - move_to_state(name)     - move to a named state ('ready', 'init', ...)
   - reset_arm(state)        - recover: clear the scene, let go, go home
   - wave_arm(waves)         - wave hello, then stow
+  - is_holding()            - look: is the object still in the jaws?
 plus list_states(), stop(), tail_log(), get_status() and ping().
+
+is_holding() is the odd one out: it needs no move_group, only the wrist camera
+and the nanoOWL detector beside it, so it answers whether or not the arm is
+enabled.
 
 The arm must be enabled before any motion command; the motion commands are
 serialized, and a second one arrives back as busy rather than queueing.
@@ -32,6 +37,7 @@ before exiting, so `systemctl stop` does not orphan move_group.
 
 import argparse
 import errno
+import json
 import os
 import re
 import shlex
@@ -82,6 +88,18 @@ PLACE_TIMEOUT = 240
 STATE_TIMEOUT = 120
 RESET_TIMEOUT = 120
 
+# A camera check is a frame grab plus one detector round trip -- under a second
+# of real work. The ceiling is for the process around it: `ros2 run` has to
+# start a Python interpreter and import the workspace, and a Jetson under load
+# takes its time over that.
+VISION_TIMEOUT = 60
+
+# The line vision_check prints its answer on. It is the ONE line of that
+# program's output meant to be parsed, and it is our own node's deliberate
+# machine-readable output -- not MoveIt's console chatter, which is handed to a
+# human unparsed and always will be.
+VERDICT_PREFIX = 'VERDICT: '
+
 # One wave is 3s of gesture, but the planned moves in and out are ordinary
 # collision-checked moves and are the slow part. Generous: this exists to stop a
 # wedged command holding the motion lock, not to bound normal operation.
@@ -129,6 +147,40 @@ def _result(ok, command='', returncode=-1, output='', error='', seconds=0.0):
         'error': error or '',
         'seconds': round(float(seconds), 2),
     }
+
+
+def _verdict(output):
+    """The camera's answer, pulled out of vision_check's output.
+
+    vision_check prints exactly one machine-readable line, `VERDICT: {json}`,
+    and everything else it prints is prose for a human. Parsing that one line
+    is not the thing the rest of this server refuses to do: the README's "hand
+    `output` to a human, don't parse it" is about MoveIt's console, which owes
+    us no format. This line is our own node's, versioned in the same tree, and
+    written to be read here.
+
+    The LAST such line wins, so a rerun inside one invocation cannot be
+    answered by its first attempt. Anything unparseable comes back as the
+    unknown answer rather than a guess -- a client that reads `held` as a
+    boolean must see None, not False, when nothing was actually decided.
+    """
+    blank = {'held': None, 'verdict': 'unknown', 'reason': '', 'sighting': {}}
+    for line in reversed((output or '').splitlines()):
+        line = line.strip()
+        if not line.startswith(VERDICT_PREFIX):
+            continue
+        try:
+            data = json.loads(line[len(VERDICT_PREFIX):])
+        except ValueError:
+            break
+        verdict = str(data.get('verdict') or 'unknown')
+        return {
+            'held': {'present': True, 'absent': False}.get(verdict),
+            'verdict': verdict,
+            'reason': str(data.get('reason') or ''),
+            'sighting': data,
+        }
+    return dict(blank, reason='vision_check printed no verdict line')
 
 
 def _b(value):
@@ -606,6 +658,45 @@ class ArmService:
         if seconds > 0:
             args += ['--seconds', '%g' % seconds]
         return self._run('wave_arm', args, timeout)
+
+    def is_holding(self, object='', timeout=VISION_TIMEOUT):
+        """Is the gripper holding the object? Looks, rather than remembers.
+
+        Runs `ros2 run dofbot_ctrl vision_check -- --held`: a frame from the
+        wrist camera, put to nanoOWL, judged against the pixel region a held
+        object appears in. It is a LIVE look, not a record of what the last
+        pick did -- the point of the question is the case where the two
+        disagree, a can that was picked and has since slipped out.
+
+        THREE ANSWERS, and `held` is the one to read:
+
+            held True   an object was seen in the jaws
+            held False  the camera had a good look and there was nothing there
+            held None   the question could not be asked -- nanoOWL not running,
+                        a dark frame, or the pixel region not yet calibrated.
+                        NOT the same as False, and must not be treated as it
+
+        `ok` says whether the question was ASKED, not what the answer
+        was: a can that is not there is a successful query. `verdict` carries the same
+        three states as text and `reason` says why in English.
+
+        Meaningful at 'carry', which is where a pick leaves the arm and where
+        the pixel region was measured. Asked with the arm somewhere else it is
+        answering about a view nobody calibrated, and will mostly say no.
+
+        Does not need the arm enabled -- a camera and a detector are not
+        move_group -- but it does take the motion lock, because a frame grabbed
+        halfway through a moving arm answers about nowhere in particular.
+
+        Args:
+            object:  catalogue entry to look for; '' means the node's default.
+            timeout: seconds before the command is killed.
+        """
+        args = ['ros2', 'run', 'dofbot_ctrl', 'vision_check', '--', '--held']
+        if object:
+            args += ['--object', str(object)]
+        result = self._run('is_holding', args, timeout)
+        return dict(result, **_verdict(result['output']))
 
     def list_states(self):
         """The saved state names, read from the node itself and cached.

@@ -22,6 +22,7 @@ where the tests are.
 | `move_to_state(name)` | `ros2 run dofbot_ctrl move_to_state -- NAME` |
 | `reset_arm(state, force)` | `ros2 run dofbot_ctrl pick_place -- --reset STATE` |
 | `wave_arm(waves, finish, seconds)` | `ros2 run dofbot_ctrl wave_arm -- --waves N` |
+| `is_holding(object)` | `ros2 run dofbot_ctrl vision_check -- --held` |
 
 Plus `list_states()`, `stop()`, `tail_log()`, `get_status()`, `ping()`.
 
@@ -35,6 +36,9 @@ Every command returns the same dict:
 
 `output` is the tail of what the node printed, which is where a MoveIt failure
 explains itself — hand it to a human, don't parse it.
+
+`is_holding()` adds three keys to that dict: `held` (**True / False / None**),
+`verdict` (the same three as text) and `reason`.
 
 ## Running it
 
@@ -56,6 +60,7 @@ python3 arm_client.py enable
 python3 arm_client.py state ready
 python3 arm_client.py pick 0.30 0.0 0.039
 python3 arm_client.py place
+python3 arm_client.py held                     # is the can still in the jaws?
 python3 arm_client.py wave 3                   # a greeting, then stow at init
 python3 arm_client.py reset                   # after a pick that failed partway
 python3 arm_client.py disable --park init
@@ -167,6 +172,33 @@ anything that hard-codes the values above has to read `DOFBOT_GRIPPER` the way
   *picking* speed, set so the servos do not trail the plan by the bridge's
   200 ms `track_time_ms` and put the gripper somewhere the plan did not. A wave
   has nothing to arrive at, so the same lag only softens the ends of the swing.
+- **`is_holding()` LOOKS, it does not remember.** It grabs a frame from the
+  wrist camera and puts it to nanoOWL. The point of the question is exactly the
+  case where a live look and the planning scene disagree — a can that was
+  picked and has since slipped out.
+- **`held` has three values and `None` is not `False`.** `True` seen, `False`
+  the camera had a good look and there was nothing there, `None` the question
+  could not be asked: nanoOWL not running, or a dark frame. `ok` says only that
+  the question got asked, so `ok` with `held` False is a working camera
+  reporting an empty gripper. Treating `None` as `False` turns "the detector is
+  busy elsewhere" into "you dropped it".
+- **It is a classification, not a detection.** The wrist camera is aimed about
+  five degrees past its own grip point, so a held can reaches the frame only as
+  a sliver and no detector will name it. nanoOWL is asked to choose between
+  *an empty gripper* and *a gripper holding a soda can* instead, which needs no
+  detectable object: measured, 0.99 holding and 0.93 empty.
+- **It reads the WHOLE frame, so it means what it says at `carry` and nowhere
+  else.** Carry points the tool well up and shows no floor, so the only can
+  that can appear is the one being held. Asked from a pose that CAN see the
+  floor, a can lying there reads as held at 1.000 — a confident wrong answer,
+  not a weak one. See ARCHITECTURE.md, *Seeing the pick*.
+- **It does not need the arm enabled**, since a camera and a detector are not
+  `move_group` — but it does take the motion lock, so it comes back `busy`
+  during a pick rather than photographing a moving arm.
+- **A pick asks the same two questions itself**, at the standoff and at carry,
+  and aborts on a definite no. It never aborts on `unknown`, so a pick on a
+  machine with nanoOWL stopped runs exactly as it always did. `reset_arm()` is
+  the way out of one that aborted after the grasp.
 - **`pick_can()` and `place_can()` are two processes.** The carried object lives
   in the planning scene between them, and that is where `--place` reads it
   from — so a server restart between the two halves is survivable, and
