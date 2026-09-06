@@ -25,7 +25,8 @@ then, in another terminal:
     # x y z is the object CENTRE in base_link: the floor height plus half the
     # object's own HEIGHT. 0.039 is an upright 122 mm can on carpet
     # (-0.022 + 0.061); 0.30 is where the can wants to be, not the closest it
-    # can sit -- see arm_service/README.md, "Where to put the robot"
+    # can sit -- see jetson-nano-services/arm-service/README.md,
+    # "Where to put the robot"
     ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.039
     ros2 run dofbot_ctrl pick_place -- --place
 

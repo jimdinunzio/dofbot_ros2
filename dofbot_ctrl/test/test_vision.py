@@ -454,14 +454,21 @@ def test_a_sighting_survives_json(monkeypatch):
 # ------------------------------------------------------ crossing a process
 
 
+# arm-service is not in this workspace -- it is a Jetson service, and lives in
+# the jetson-nano-services checkout beside the others. The two files still have
+# to agree about one literal, so the test reaches for it where it is and skips
+# where it is not. DOFBOT_ARM_SERVICE points at a checkout somewhere else.
+ARM_SERVICE = os.environ.get(
+    'DOFBOT_ARM_SERVICE',
+    os.path.expanduser('~/Documents/git/jetson-nano-services/arm-service'))
+
+
 def _arm_server():
-    """arm_server.py, imported from beside dofbot_ctrl. Stdlib only, no side
-    effects at import -- main() is guarded."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.abspath(
-        os.path.join(here, '..', '..', 'arm_service', 'arm_server.py'))
+    """arm_server.py, imported from the jetson-nano-services checkout. Stdlib
+    only, no side effects at import -- main() is guarded."""
+    path = os.path.join(ARM_SERVICE, 'arm_server.py')
     if not os.path.exists(path):
-        pytest.skip('arm_service is not beside dofbot_ctrl in this tree')
+        pytest.skip('arm-service is not checked out at %s' % ARM_SERVICE)
     spec = importlib.util.spec_from_file_location('_arm_server', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

@@ -32,7 +32,6 @@ and can abort it, but only ever on a definite no; see Seeing the pick.
 | `dofbot_ctrl` | Everything we wrote. Kinematics, gripper model, pick sequence, hardware bridges. |
 | `dofbot_arm_lib` | Vendor serial driver (`Arm_Lib`), repackaged. |
 | `dofbot_interface` | Message/service definitions. |
-| `arm_service` | **Not a colcon package** — no `package.xml`, so `colcon` passes over it. The XML-RPC front door: a remote caller asks for a pick, this runs the `ros2` commands. |
 
 ---
 
@@ -150,8 +149,8 @@ instead of swinging into it.
 0.28–0.32 m gets the full 80 mm standoff, the 80 mm grip height proven on
 hardware, `grasp_pitch` on its preferred 2.2 and over 0.12 rad of joint margin
 at once; 0.20–0.23 solves with none of them. Whoever drives the base should aim
-for 0.30 — see `arm_service/README.md`, "Where to put the robot", for the whole
-band and the constants that gate it.
+for 0.30 — see `jetson-nano-services/arm-service/README.md`, "Where to put the
+robot", for the whole band and the constants that gate it.
 
 **Ranked, not first-fit.** Candidates are scored on how much room the tightest
 joint has left (`_joint_margin`) and on the standoff they support, because near
@@ -557,21 +556,25 @@ perception, and `place()` will then take coordinates the way `pick()` does.
 
 ## Driving it from another machine
 
-`arm_service/` is the seam for a caller that has no ROS: an XML-RPC server that
-turns `pick_can(x, y, z)` into the `ros2` commands above. It holds no rclpy state
-of its own — one long-lived `ros2 launch` it supervises, one short-lived
-`ros2 run` per command — so it restarts freely and the stack it drives is the
-same one a terminal drives.
+**`arm-service` is the seam for a caller that has no ROS, and it lives in
+another repo**: `jetson-nano-services/arm-service`, beside the other Jetson
+services rather than in this workspace, because it is one of them — a systemd
+unit on the robot's own machine, not a colcon package. It is an XML-RPC server
+that turns `pick_can(x, y, z)` into the `ros2` commands above, and it holds no
+rclpy state of its own — one long-lived `ros2 launch` it supervises, one
+short-lived `ros2 run` per command — so it restarts freely and the stack it
+drives is the same one a terminal drives. It finds this workspace through
+`DOFBOT_WS`, defaulting to `~/ros2_ws`.
 
 ```bash
-src/dofbot_ros2/arm_service/start_arm_server.sh      # or the systemd unit
+~/Documents/git/jetson-nano-services/arm-service/start_arm_server.sh   # or the unit
 python3 arm_client.py --url http://192.168.55.1:8001/ pick 0.30 0.0 0.039
 ```
 
 `enable_arm`, `disable_arm`, `pick_can`, `place_can`, `move_to_state`,
 `reset_arm`, `wave_arm`. Motion is serialized: a second request is answered `busy` rather
 than queued, because a queued arm command executes against a world that has
-moved on. See `arm_service/README.md`.
+moved on. See `jetson-nano-services/arm-service/README.md`.
 
 ---
 
