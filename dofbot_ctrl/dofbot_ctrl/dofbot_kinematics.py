@@ -110,7 +110,8 @@ _LAT_PRE = 5e-05 + 0.00055 + 5e-05      # 0.00065
 
 # Joint limits, transcribed per joint from the URDF's <limit> tags. They are NOT
 # all the same and they are NOT symmetric: arm1 swings -109..+108 degrees, a 217
-# degree sector, while the other four are +-89.95.
+# degree sector, and arm3 bends to +108 one way against -89.95 the other. Only
+# arm2, arm4 and arm5 are the plain +-89.95.
 #
 # An earlier version of this module used a single symmetric JOINT_LIMIT = 1.57
 # for all five. That silently clipped the base yaw to +-90 and threw away 19
@@ -120,13 +121,14 @@ _LAT_PRE = 5e-05 + 0.00055 + 5e-05      # 0.00065
 JOINT_LIMITS = (
     (-1.9024, 1.8850),      # arm1_Joint  yaw   -109.00 .. +108.00 deg
     (-1.5700, 1.5700),      # arm2_Joint  pitch
-    (-1.5700, 1.5700),      # arm3_Joint  pitch
+    (-1.5700, 1.8850),      # arm3_Joint  pitch  -89.95 .. +108.00 deg
     (-1.5700, 1.5700),      # arm4_Joint  pitch
     (-1.5700, 1.5700),      # arm5_Joint  roll
 )
 
 # Kept for callers that want a single conservative number (the tightest joint).
-# Prefer JOINT_LIMITS; this cannot express arm1's wider, asymmetric range.
+# Prefer JOINT_LIMITS; this cannot express arm1's or arm3's wider, asymmetric
+# range.
 JOINT_LIMIT = 1.57
 
 

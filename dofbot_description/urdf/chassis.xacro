@@ -19,7 +19,8 @@
   DOFBOT_FLOOR below.
 
   Defaults are the values measured on the real robot and validated at runtime
-  through the chassis_collision node (which this replaces).
+  through the chassis_collision node (which this replaces). The cylinder radius
+  is the pancake decks', not the body's widest point; see the note on it.
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
@@ -44,9 +45,23 @@
   <xacro:property name="ground_drop"
                   value="${0.026 if floor_profile == 'hard' else 0.022}" />
 
+  <!-- Cylinder radius. This is the PANCAKE DECKS' radius, which is what the arm
+       can actually touch: level 2 sits at elbow height and every deck above it
+       is the same width. Set from a direct clearance measurement rather than a
+       tape across the body: at the 'init' fold, arm3_Link's rearmost point
+       sits 0.1646 m from the cylinder axis with 5 mm of air behind it, so the
+       decks reach 0.1596.
+
+       THE BOTTOM DECK IS WIDER THAN THIS AND IS DELIBERATELY NOT MODELLED. It
+       has a curved front and carries the bumpers, so it reaches out past every
+       deck above it, but it sits 3 mm above the arm's mounting plate and the
+       arm is never commanded into that space. One cylinder is one radius at
+       every height, so covering it would mean widening this number and taking
+       the 5 mm back off the elbow, which is the wrong trade; it needs its own
+       solid if it is ever modelled at all. -->
   <xacro:macro name="dofbot_chassis" params="
       parent:=base_link
-      radius:=0.165
+      radius:=0.1596
       height:=0.335
       back_offset:=0.265
       z_bottom:=0.003

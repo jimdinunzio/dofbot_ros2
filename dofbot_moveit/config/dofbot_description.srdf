@@ -41,23 +41,23 @@
         test/test_named_states.py parses this file and fails if they diverge. Each was validated against the
         live planning scene by `pick_place` in its check-states mode, rather
         than eyeballed in RViz.
-        'init' used to be {0, -1.57, 1.57, 1.57, 0}; /check_state_validity
-        reports arm3_Link/chassis_link for that, which only became a collision
-        once chassis_link and floor_link became real URDF links.-->
-    <!--Rest/stow pose: folded and compact, TCP (0.091, 0.002, 0.178).
-        Posed by hand on the real arm and read with calibrate_zero as
-        {1: 1.0, 2: 69.0, 3: -84.0, 4: -92.0, 5: -2.0} (encoder median minus
-        90), which joint_map.servo_to_urdf turns into
-        {1.00, -67.00, 86.00, 94.00, 0.00} degrees.
-        arm4 is clamped 94.00 -> 89.00 deg: the URDF limit is 89.95 and the
-        hardware maximum is 92.00 (servo 4 on its 0 stop, given its +2 zero
-        offset), so the measured value was posed past the mechanical stop.
-        Costs 13 mm of TCP height.-->
+        The vendor's {0, -1.57, 1.57, 1.57, 0} is not used here. It was dropped
+        for arm3_Link/chassis_link contact, which held against a 0.165 m chassis
+        radius; at the measured 0.1596 that pose clears the cylinder by 5.4 mm,
+        so that reason no longer stands on its own.-->
+    <!--Startup and can-looking pose: folded low and forward, TCP
+        (0.099, 0.001, 0.152), phi=1.955. It clears the CHASSIS OAK-D's view of
+        a can on the floor, which is what it is measured against.
+        Posed by hand on the real arm and read with calibrate_zero as servo
+        medians {1: 90.0, 2: 166.0, 3: -12.0, 4: 10.0, 5: 88.0}, which
+        joint_map.servo_to_urdf turns into {0.00, -74.00, 104.00, 82.00, 0.00}
+        degrees. arm3 at 104.00 is past the +-89.95 the other pitch joints
+        carry; arm3_Joint's URDF limit is +108 for this reason.-->
     <group_state name="init" group="arm_group">
-        <joint name="arm1_Joint" value="0.0175"/>
-        <joint name="arm2_Joint" value="-1.1694"/>
-        <joint name="arm3_Joint" value="1.5010"/>
-        <joint name="arm4_Joint" value="1.5533"/>
+        <joint name="arm1_Joint" value="0.0"/>
+        <joint name="arm2_Joint" value="-1.2915"/>
+        <joint name="arm3_Joint" value="1.8151"/>
+        <joint name="arm4_Joint" value="1.4312"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
     <!--Observation pose: arm up and tucked back, TCP (0.100, 0, 0.322),

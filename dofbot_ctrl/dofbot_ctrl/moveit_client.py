@@ -119,21 +119,27 @@ BRIDGE_OPEN_TIME = 'open_time_ms'
 # 'up' and 'down' are the vendor's originals and are kept as they were.
 #
 # 'init' is Jim's, posed by hand on the real arm and read off with calibrate_zero
-# as {1: 1.0, 2: 69.0, 3: -84.0, 4: -92.0, 5: -2.0} -- encoder median minus 90.
-# Through joint_map.servo_to_urdf (which applies the per-servo zero offsets and
-# the 2/3/4 sign flip) that is {1.00, -67.00, 86.00, 94.00, 0.00} degrees.
+# as servo medians {1: 90.0, 2: 166.0, 3: -12.0, 4: 10.0, 5: 88.0}. Through
+# joint_map.servo_to_urdf (which applies the per-servo zero offsets and the
+# 2/3/4 sign flip) that is {0.00, -74.00, 104.00, 82.00, 0.00} degrees, used
+# verbatim -- servos 1 and 5 landed exactly on their calibrated centres.
 #
-#   arm4 is clamped from 94.00 to 89.00 deg. Two reasons, and the arm cannot do
-#   the measured value either way: the URDF limit is +-1.57 rad = 89.95 deg, and
-#   the hardware maximum is +92.00 deg (servo 4 against its 0 stop, given its +2
-#   zero offset). A reading of -2 means the joint was posed past its mechanical
-#   stop by hand. 89.00 keeps a degree of margin off the stop. It costs 13 mm of
-#   TCP height, 0.183 -> 0.196. Raising arm4_Joint's URDF limit to the hardware
-#   range would recover it, at the price of asymmetric limits.
+# IT IS A LOOKING POSE, NOT JUST A STOW. It folds the arm low and forward so the
+# CHASSIS OAK-D has an unobstructed view of a can on the floor; that is the
+# constraint it is measured against, and the reason it sits 26 mm lower than a
+# tidier fold would.
 #
-# The old vendor 'init' {0, -1.57, 1.57, 1.57, 0} is gone: /check_state_validity
-# reports arm3_Link/chassis_link, which only became a collision once chassis_link
-# and floor_link became real URDF links.
+#   arm3 at 104.00 deg is past the +-89.95 that the other pitch joints carry.
+#   arm3_Joint's URDF limit is +108 deg for this reason; servo 3 reads -12, i.e.
+#   12 deg below its nominal 0, and the driver writes angles read past nominal
+#   rather than clamping them. There was free travel left beyond the pose.
+#
+#   It clears the chassis cylinder by 5.0 mm, which is the measurement that set
+#   that cylinder's radius, and check-states passes on it.
+#
+# The vendor 'init' {0, -1.57, 1.57, 1.57, 0} is not used. It was dropped for an
+# arm3_Link/chassis_link contact that held against the 0.165 radius; at 0.1596
+# that pose clears the cylinder by 5.4 mm, so that reason no longer stands.
 #
 # 'ready' was solved with dofbot_kinematics; 'carry' and 'over_trash' are
 # measured on the arm rather than derived. All three are checked against the
@@ -149,9 +155,9 @@ NAMED_STATES = {
     #                theta1  theta2   theta3   theta4  theta5
     'up':         (0.0,     0.0,     0.0,     0.0,    0.0),
     'down':       (0.0,     1.57,    0.0,     0.0,    0.0),
-    # folded and compact, TCP (0.091, 0.002, 0.178) phi=1.885 -- the rest/stow
-    # pose, hand-posed on the real arm; see the note above on arm4
-    'init':       (0.0175, -1.1694,  1.5010,  1.5533, 0.0),
+    # folded low and forward, TCP (0.099, 0.001, 0.152) phi=1.955 -- the startup
+    # and can-looking pose, hand-posed on the real arm; see the note above on arm3
+    'init':       (0.0,    -1.2915,  1.8151,  1.4312, 0.0),
     # observation: arm up and tucked back, TCP (0.100, 0, 0.322) phi=1.0, so the
     # chassis camera has a clear view of the floor in front
     'ready':      (0.0,    -0.7932,  1.2775,  0.5157, 0.0),

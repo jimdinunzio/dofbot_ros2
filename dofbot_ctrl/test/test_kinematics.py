@@ -127,9 +127,9 @@ def joint_span(index, n, margin=0.999):
     """`n` angles spanning one joint's OWN range, stopping short of the stops.
 
     Per joint, because they are not all the same: arm1 runs -109..+108 degrees
-    while the rest are +-89.95. Using one symmetric number here would never
-    exercise the outer 19 degrees of base yaw, which is exactly the region a
-    bug once hid in.
+    and arm3 -89.95..+108, while arm2, arm4 and arm5 are the plain +-89.95.
+    Using one symmetric number here would never exercise the outer 19 degrees of
+    base yaw, which is exactly the region a bug once hid in.
 
     The margin is deliberate. ik() applies no epsilon to the limit test, so a
     state sitting exactly ON a stop round-trips to 1.5700000000000003 and is
@@ -542,16 +542,44 @@ def test_lesson_state_inverts(name):
 LESSON_IK_TARGET = (0.111138, 0.028503, 0.311743)
 
 
-def test_lesson_ik_target_is_reachable_over_a_band_of_pitches():
+def _contiguous_bands(degs):
+    """Split a sorted list of whole-degree pitches into runs of consecutive
+    degrees, returned as (first, last) pairs."""
+    bands = []
+    for d in degs:
+        if bands and d == bands[-1][1] + 1:
+            bands[-1][1] = d
+        else:
+            bands.append([d, d])
+    return [tuple(b) for b in bands]
+
+
+def test_lesson_ik_target_is_reachable_over_bands_of_pitches():
+    """The target admits whole runs of pitches, not isolated ones, and never
+    anything near top-down.
+
+    It is reachable in TWO disjoint bands, and the low one exists because arm3
+    bends to +108 rather than +90 -- the elbow folds far enough to put the tool
+    on the target at a near-vertical pitch. Both bands are consequences of
+    K.JOINT_LIMITS, so the edges are read from the solver rather than pinned to
+    literals; what is asserted is the shape.
+    """
     x, y, z = LESSON_IK_TARGET
-    solved = [radians(d) for d in range(0, 181)
-              if K.ik_best(x, y, z, radians(d)) is not None]
-    assert solved, 'the lessons\' IK target came out unreachable'
-    # A contiguous band around ~70 deg from vertical; nothing near top-down.
-    assert 0.9 < min(solved) < 1.1
-    assert 1.25 < max(solved) < 1.45
-    assert len(solved) == round(degrees(max(solved) - min(solved))) + 1, \
-        'expected one contiguous band of feasible pitches'
+    degs = [d for d in range(0, 181)
+            if K.ik_best(x, y, z, radians(d)) is not None]
+    assert degs, 'the lessons\' IK target came out unreachable'
+
+    bands = _contiguous_bands(degs)
+    assert len(bands) == 2, bands
+    # Every band is a real run of pitches, not a single solvable degree.
+    assert all(hi > lo for lo, hi in bands), bands
+    # Nothing near top-down: phi = 180 deg is the tool pointing straight down.
+    assert max(degs) < 90, bands
+
+    # The low band is the one arm3's extra travel opens up, so it has to sit
+    # below the pitch that the +-89.95 joints alone can reach.
+    low, high = bands
+    assert low[1] < high[0]
 
 
 def test_lesson_ik_target_solution_is_exact():
