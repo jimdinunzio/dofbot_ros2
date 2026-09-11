@@ -501,7 +501,9 @@ ros2 run dofbot_ctrl pick_place -- --plan-only 0.30 0.0 0.039
 ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.039   # upright can on carpet
 ros2 run dofbot_ctrl pick_place -- --place
 
-# recovery after a run that died partway: clear the scene, let go, go home
+# recovery after a run that died partway: clear the scene, let go, and park at
+# 'init' -- folded low, so the arm is not standing in the OAK-D's view while
+# something else works out what went wrong
 ros2 run dofbot_ctrl pick_place -- --reset
 
 # a greeting gesture, planned and collision-checked like any other move

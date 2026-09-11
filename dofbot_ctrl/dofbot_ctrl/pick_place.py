@@ -190,6 +190,13 @@ MAX_STATE_CHECKS = 10
 # another node, not leftovers. Must match chassis_collision's `object_id`.
 SCENE_FIXTURES = ('robot_chassis',)
 
+# Where a reset leaves the arm. 'init' is folded low and forward, which is what
+# this has to be: reset is what runs after a pick went wrong, and whatever looks
+# for the object next is the OAK-D on the chassis. Parking anywhere with the arm
+# up leaves it standing in that camera's view, so the recovery blinds the thing
+# that has to decide what to do about it.
+RESET_STATE = 'init'
+
 
 def _joint_margin(joints):
     """How many radians the TIGHTEST joint has left before its own limit.
@@ -836,7 +843,7 @@ class PickPlace(Node):
 
     # ------------------------------------------------------------------ reset
 
-    def reset(self, state='ready', force=False):
+    def reset(self, state=RESET_STATE, force=False):
         """Recover from a run that died partway: clear, release, go home.
 
         A failed pick leaves the arm wherever it stopped AND the object wherever
@@ -852,7 +859,7 @@ class PickPlace(Node):
         cannot get out of a hole the scene is holding it in.
 
         Opening DROPS whatever is held, in place, before the arm moves. That is
-        deliberate -- the alternative is carrying the object to 'ready' with the
+        deliberate -- the alternative is carrying the object to `state` with the
         scene no longer holding it, and dropping it from up there instead.
         """
         if state not in NAMED_STATES:
@@ -959,10 +966,11 @@ def main(args=None):
                              'nothing; leaves the object in the scene and drawn')
     parser.add_argument('--check-states', action='store_true',
                         help='validate every named state and exit')
-    parser.add_argument('--reset', nargs='?', const='ready', default=None,
+    parser.add_argument('--reset', nargs='?', const=RESET_STATE, default=None,
                         metavar='STATE',
                         help='recovery: empty the planning scene, open the '
-                             'gripper and move to STATE (default ready)')
+                             'gripper and move to STATE (default %s)'
+                             % RESET_STATE)
     parser.add_argument('--no-vision', action='store_true',
                         help='do not confirm the pick with the wrist camera. '
                              'The checks already pass themselves when they '

@@ -158,8 +158,11 @@ NAMED_STATES = {
     # folded low and forward, TCP (0.099, 0.001, 0.152) phi=1.955 -- the startup
     # and can-looking pose, hand-posed on the real arm; see the note above on arm3
     'init':       (0.0,    -1.2915,  1.8151,  1.4312, 0.0),
-    # observation: arm up and tucked back, TCP (0.100, 0, 0.322) phi=1.0, so the
-    # chassis camera has a clear view of the floor in front
+    # arm up and tucked back, TCP (0.100, 0, 0.322) phi=1.0 -- where a pick
+    # begins: the jaws open here before the approach. A pose to PASS THROUGH,
+    # not one to leave the arm in, because at that height it stands in the
+    # OAK-D's view of the floor in front. 'init' is the low pose that keeps
+    # that view clear, and is where a reset parks for exactly that reason.
     'ready':      (0.0,    -0.7932,  1.2775,  0.5157, 0.0),
     # arm high and tucked, TCP (0.082, 0.001, 0.325) phi=1.08 -- safe to drive
     'carry':      (0.0,    -0.718,  0.840,  0.959, 0.0),
