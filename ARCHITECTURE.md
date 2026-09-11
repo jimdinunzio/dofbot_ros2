@@ -239,12 +239,21 @@ The approach check is different, because **angle falls with range** — the same
 | 40 mm | 115.5 mm | 20.5° | inside |
 | 80 mm | 155.5 mm | 15.6° | comfortably inside |
 
-So `approach` sees its subject comfortably, and `held` — which asks about the
-grip point — sees only a sliver. **That is why `held` is a classification and
-`approach` is a detection**, and it is the whole reason the two checks are not
-the same mechanism. Aiming the camera down and inward by ten or fifteen degrees
-would let both be detections, but it is a hardware change and nothing currently
-needs it.
+That table is why `approach` was built as a detection and `held` — which asks
+about the grip point, and sees only a sliver of it — as a classification.
+
+**Being inside the nominal frame turned out not to be enough.** Measured
+2026-09-11: a can 180 mm from the TCP and 9.6° off axis, better than the last
+row above, returned no detection at any score down to the 0.10 floor, and the
+pick aborted on a can that was really there. What the wrist camera reliably
+returns a can for is a can the tool is pointed **down** at, near the middle of
+the view; level or above, it reports nothing. `approach` is therefore switched
+off in `vision.CHECK_USABLE` — it answers UNKNOWN, which warns and passes,
+rather than failing picks on a question this camera cannot answer.
+
+Aiming the camera down and inward by ten or fifteen degrees is the fix, and it
+would let both checks be detections. **It is now the thing that needs it**; the
+code flips back by setting both `CHECK_USABLE` entries True.
 
 ### The two checks work differently, and have to
 

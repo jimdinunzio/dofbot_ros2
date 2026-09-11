@@ -84,9 +84,9 @@ the same region of the frame in every posture the arm can strike. That
 invariance is what would have made a fixed pixel region a sound rule; the
 trouble is that the region is off the bottom of the sensor.
 
-The approach check is a different matter, because ANGLE FALLS WITH RANGE. The
-same 43.3 mm sideways offset subtends less the further down the tool axis the
-target sits:
+The approach check was expected to escape this, because ANGLE FALLS WITH RANGE.
+The same 43.3 mm sideways offset subtends less the further down the tool axis
+the target sits:
 
     standoff   range    off-axis
        0 mm    75.5     29.8 deg     the grasp itself -- outside the frame
@@ -94,11 +94,21 @@ target sits:
       40 mm   115.5     20.5 deg     inside
       80 mm   155.5     15.6 deg     comfortably inside
 
-So `approach` can see what it is asked about and `held` cannot, and CHECK_USABLE
-below says so. The fix is physical: aim the camera down and inward by ten or
-fifteen degrees, so the tool axis is nearer the middle of the frame instead of
-past its edge. Nothing in this file needs to change when that happens -- flip
-`held` to True in CHECK_USABLE.
+IT DOES NOT ESCAPE IT, AND THE TABLE IS WHY THAT WAS MISSED: being inside the
+nominal frame is necessary, not sufficient. It says where the can projects and
+nothing about whether the detector fires on it there. Measured 2026-09-11, a
+can 180 mm from the TCP and 9.6 degrees off axis -- better than the last row
+above -- returned no detection at any score. What this camera does return a can
+for is a can the tool is pointed DOWN at, near the middle of the view; level or
+above, it reports nothing.
+
+So NEITHER check is answerable as the camera is aimed today, by detection at
+least; 'held' survives on classification, which needs no detectable object, and
+CHECK_USABLE below says which is which. The fix is physical, and it is the same
+one for both: aim the camera down and inward by ten or fifteen degrees, so the
+tool axis is nearer the middle of the frame instead of past its edge. Nothing
+in this file needs to change when that happens -- flip the entries in
+CHECK_USABLE back to True.
 
 CLASSIFICATION: THE SIZE AXIS IS THE ONE THAT WORKS
 ---------------------------------------------------
@@ -318,10 +328,29 @@ CHECKS = ('approach', 'held')
 
 # Whether each check can be answered by this hardware as it is aimed. Not a
 # policy knob and not the abort policy -- the same kind of statement as
-# gripper.CALIBRATED. Both are answerable now: 'approach' by detection, since
-# the target is 15-25 degrees off axis at a standoff and comfortably in frame,
-# and 'held' by classification, which needs no detectable object.
-CHECK_USABLE = {'approach': True, 'held': True}
+# gripper.CALIBRATED.
+#
+# 'held' is answerable by classification, which needs no detectable object.
+#
+# 'approach' IS NOT, and the table above is why it was expected to be. The
+# geometry there is necessary but not sufficient: it puts the can inside the
+# nominal frame and says nothing about whether the detector fires on it. What
+# the arm camera actually returns a can for is a can the tool is pointed DOWN
+# at, near the middle of the view; level or above, it reports nothing, and the
+# lens sees far less usable scene than a 63-degree horizontal field suggests.
+#
+# Measured 2026-09-11: soda_can called at base_link (0.330, 0.003, 0.039) by
+# the chassis OAK-D, arm at its 80 mm standoff with the can 180 mm from the
+# TCP and 9.6 degrees off the camera axis -- inside the frame by the table,
+# and nanoOWL still detected nothing at any score down to the 0.10 floor. The
+# pick aborted on a can that was really there.
+#
+# So the check now passes as UNKNOWN rather than failing picks on a question
+# this camera cannot answer. The fix is the physical one this file already
+# names: aim the camera down and inward by ten or fifteen degrees. Flip this
+# back the moment a frame grabbed from the standoff shows a detection --
+# calibrate_view --detect is what takes that frame.
+CHECK_USABLE = {'approach': False, 'held': True}
 
 
 class VisionError(RuntimeError):
@@ -697,10 +726,11 @@ def look(check, label, frame=None, url=OWL_URL):
         raise ValueError('no such check %r; have %s' % (check, list(CHECKS)))
 
     if not CHECK_USABLE[check]:
-        return _unknown(check, 'the camera cannot see what the %s check is '
-                               'about: the grip point sits just outside its '
-                               'field of view, so nothing is ever detected '
-                               'there. See CHECK_USABLE' % check, label)
+        return _unknown(check, 'the camera cannot answer the %s check as it '
+                               'is aimed: it looks along the tool axis, offset '
+                               'to one side and never toeing in, so what the '
+                               'check is about is not reliably in the frame. '
+                               'See CHECK_USABLE' % check, label)
 
     if frame is None:
         frame = grab()
