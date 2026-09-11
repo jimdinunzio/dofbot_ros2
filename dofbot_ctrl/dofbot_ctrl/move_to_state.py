@@ -5,6 +5,10 @@ Move the arm to one of the saved states, from the command line.
 
     ros2 run dofbot_ctrl move_to_state ready
     ros2 run dofbot_ctrl move_to_state init
+    # let go of whatever is held, then park -- what a shutdown runs
+    ros2 run dofbot_ctrl move_to_state --open-gripper init
+    # open the jaws and move nothing
+    ros2 run dofbot_ctrl move_to_state --open-gripper
     # names, joint values and where the tool ends up -- needs nothing running
     ros2 run dofbot_ctrl move_to_state --list
 
@@ -17,6 +21,12 @@ The states live in moveit_client.NAMED_STATES and are mirrored into
 dofbot_description.srdf, which is where the RViz panel reads them from.
 test/test_named_states.py parses the SRDF and fails if the two disagree -- they
 are two copies of the same numbers, and they have drifted before.
+
+--open-gripper DROPS WHATEVER IS HELD, where it is, before any move. The order
+is deliberate and is the one `pick_place --reset` uses: parking first would
+carry the object up and drop it from there instead. It is the gripper only --
+an object the planning scene thinks is attached stays attached, which is why
+this is not a substitute for --reset.
 
 THIS DOES NOT TOUCH THE PLANNING SCENE, and that is the difference between it
 and `pick_place --reset`. A move that fails immediately with
@@ -60,6 +70,9 @@ class StateMover(Node):
         super().__init__('move_to_state')
         self.mc = DofbotMoveIt(self)
 
+    def open_gripper(self):
+        self.mc.open_gripper()
+
     def move(self, name):
         self.mc.move_named(name)
         # FK on the live joints, so this reports where the arm ACTUALLY ended
@@ -80,6 +93,10 @@ def main(args=None):
     parser.add_argument('--list', action='store_true',
                         help='print the saved states and exit, without '
                              'connecting to move_group')
+    parser.add_argument('--open-gripper', action='store_true',
+                        help='open the jaws first, dropping whatever is held '
+                             'where it is. STATE becomes optional: on its own '
+                             'this lets go and moves nothing')
     cli = parser.parse_args(remove_ros_args(sys.argv)[1:])
 
     # Both of these are settled before rclpy.init, so a typo costs nothing and
@@ -87,12 +104,12 @@ def main(args=None):
     if cli.list:
         print_states()
         return 0
-    if cli.state is None:
+    if cli.state is None and not cli.open_gripper:
         parser.print_usage(sys.stderr)
         print('give a state name: %s' % ', '.join(sorted(NAMED_STATES)),
               file=sys.stderr)
         return 2
-    if cli.state not in NAMED_STATES:
+    if cli.state is not None and cli.state not in NAMED_STATES:
         print('unknown state %r; have %s'
               % (cli.state, ', '.join(sorted(NAMED_STATES))), file=sys.stderr)
         return 2
@@ -101,7 +118,11 @@ def main(args=None):
     node = StateMover()
     status = 0
     try:
-        node.move(cli.state)
+        # Jaws before wheels: see --open-gripper in the docstring.
+        if cli.open_gripper:
+            node.open_gripper()
+        if cli.state is not None:
+            node.move(cli.state)
     except MoveItError as exc:
         node.get_logger().error(str(exc))
         status = 1
