@@ -276,9 +276,19 @@ MIN_SCORE = 0.1
 # held at 1.000 -- so the pose is what makes the question answerable, and
 # asking it from anywhere that sees floor gets a confident wrong answer.
 #
-# The alternatives differ ONLY in the can, which is what makes the comparison
-# about the can and not about the room; see the docstring's three wording
-# rules. Measured 2026-09-05: 0.992 holding, 0.927 empty.
+# The empty alternative names NO SCENE. The background at carry is whatever the
+# arm happens to face, so a negative such as 'a wall', 'a floor' or 'furniture'
+# is right only where that is what is behind it -- and scores best exactly on
+# the frames it happens to describe. The alternatives differ only in the can;
+# see the docstring's three wording rules.
+#
+# Measured 2026-10-17 on three frames -- can in the jaws at carry, the same
+# view emptied, and an empty view of carpet and table legs: 0.871 holding,
+# 0.752 and 0.725 empty. The only pairing tried that was right on all three
+# without naming a background. Background-free negatives that won the first
+# two frames ('a photo', 'nothing') called the carpet frame held at 0.86-0.89.
+# Wordings that name part of the can ('the upper portion of', 'the top of')
+# lose to the whole-can wording on the held frame.
 def held_alternatives(label):
     """The two worlds the held check chooses between, for this object."""
     return ('an empty gripper', 'a gripper holding ' + label)
