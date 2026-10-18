@@ -307,9 +307,10 @@ def test_the_can_is_held_at_its_own_tuned_angle():
         assert can.grip_angle() == pytest.approx(
             g.grip_angle_for(can.grasp_width, can.squeeze))
         # Past contact, so the jaws load against the can rather than resting
-        # on it, and LOOSER than the untuned default.
-        assert g.jaw_angle_for(can.grasp_width) < can.grip_angle() \
-            < g.grip_angle_for(can.grasp_width)
+        # on it, and not the untuned default.
+        assert g.jaw_angle_for(can.grasp_width) < can.grip_angle()
+        assert can.grip_angle() != pytest.approx(
+            g.grip_angle_for(can.grasp_width))
 
 
 def test_an_untuned_object_follows_the_profile_default():

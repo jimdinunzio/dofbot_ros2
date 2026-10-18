@@ -232,22 +232,20 @@ SODA_CAN = register(GraspableObject(
     shape='cylinder',
     width=0.066,
     height=0.122,
-    # THIS IS WHAT WAS ACTUALLY WRONG when the can would not stay in the jaws,
-    # and it masked everything else while it stood. At 45 mm the grip was low on
-    # the body; at 80 mm -- ABOVE the 61 mm centre of mass, so the can hangs
-    # from the jaws rather than balancing on them -- the pick works on hardware.
+    # 30 mm below the top of the can: well ABOVE the 61 mm centre of mass, so
+    # the can hangs from the jaws rather than balancing on them, and still on
+    # the straight body below the shoulder.
     #
     # Worth remembering before reaching for the gripper model next time: a grasp
     # that fails is not evidence about jaw geometry until the grip HEIGHT has
     # been ruled out. Both the squeeze below and gripper.BACK_STOP_CLEARANCE
-    # were tuned against this fault before it was found, which is why neither
-    # of them reads like the fix it was thought to be.
-    grasp_height=0.080,
+    # were tuned against a too-low grip before it was found, which is why
+    # neither of them reads like the fix it was thought to be.
+    grasp_height=0.092,
 
-    # Room to trade when 80 mm will not solve, and only then -- the scorer in
-    # pick_place quantises its preferences so that a difference too small to
-    # mean anything cannot outvote the height above, which is the one proven on
-    # hardware. 
+    # Room to trade when the nominal height will not solve, and only then -- the
+    # scorer in pick_place quantises its preferences so that a difference too
+    # small to mean anything cannot outvote the nominal height.
     #
     # The ends are the straight body of the can: above the base taper, below
     # where the shoulder starts to draw in at ~105 mm. Gripping outside that is
@@ -257,7 +255,7 @@ SODA_CAN = register(GraspableObject(
     # WHAT IS STORED IS A WIDTH, NOT THE ANGLE, because that is the coordinate
     # the rest of the model works in: grip_angle_for interpolates
     # grasp_width
-    squeeze=0.005,
+    squeeze=0.007,
 
     mesh='package://dofbot_description/meshes/cokecan.obj'))
 
