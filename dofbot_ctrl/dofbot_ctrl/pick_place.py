@@ -17,6 +17,8 @@ Pick and place, driven by coordinates rather than by RViz.
     DOFBOT_GRIPPER=stock ros2 run dofbot_ctrl pick_place -- \
         --pick --object test_block 0.22 0.0 0.015
     ros2 run dofbot_ctrl pick_place -- --check-states
+    # let go where the arm stands and forget what was held; moves nothing
+    ros2 run dofbot_ctrl pick_place -- --drop
     # recover after a run that died partway: empty the scene, let go, go home
     ros2 run dofbot_ctrl pick_place -- --reset
 
@@ -907,6 +909,27 @@ class PickPlace(Node):
         self.get_logger().info('placed%s'
                                % (' ' + ', '.join(held) if held else ''))
 
+    def drop(self):
+        """Open the jaws where the arm is, and forget whatever was attached.
+
+        No motion: what is held falls from wherever the arm stands. The scene
+        is cleared AFTER the jaws open, so a failed open leaves it still saying
+        what the gripper is holding. Attached objects only -- anything standing
+        in the world is left for the next pick, which resets it.
+        """
+        _world, held = self.mc.object_ids()
+        self.mc.open_gripper()
+        for name in held:
+            self.mc.detach(name)
+            self.mc.remove(name)
+        if held:
+            # Same reason as place(): marker ids are per process.
+            self.markers.clear()
+        self.held = None
+        self.get_logger().info('dropped%s'
+                               % (' ' + ', '.join(held) if held
+                                  else ' (nothing attached)'))
+
     # ------------------------------------------------------------------ reset
 
     def reset(self, state=RESET_STATE, force=False):
@@ -1057,24 +1080,31 @@ def main(args=None):
     half.add_argument('--place', action='store_true',
                       help='place what the gripper is already holding, without '
                            'picking anything first. Takes no coordinates')
+    half.add_argument('--drop', action='store_true',
+                      help='open the jaws where the arm is, dropping whatever '
+                           'is held, and remove it from the planning scene. '
+                           'Moves nothing; takes no coordinates')
     cli = parser.parse_args(remove_ros_args(sys.argv)[1:])
 
     # All settled before rclpy.init, so a bad command line costs nothing and
     # says what the choices are rather than starting a node to find out.
-    modes = (cli.check_states, cli.reset, cli.plan_only, cli.pick, cli.place)
+    modes = (cli.check_states, cli.reset, cli.plan_only, cli.pick, cli.place,
+             cli.drop)
     if not any(modes):
         parser.print_usage(sys.stderr)
-        print('give a mode: --pick x y z, --place, --plan-only x y z, --reset '
-              'or --check-states', file=sys.stderr)
+        print('give a mode: --pick x y z, --place, --drop, --plan-only x y z, '
+              '--reset or --check-states', file=sys.stderr)
         return 2
-    if cli.place and (cli.x is not None or cli.y is not None
-                      or cli.z is not None):
-        print('--place takes no coordinates: it places what the gripper is '
-              'already holding, wherever that came from', file=sys.stderr)
+    if (cli.place or cli.drop) and (cli.x is not None or cli.y is not None
+                                    or cli.z is not None):
+        print('--%s takes no coordinates: it releases what the gripper is '
+              'already holding, wherever that came from'
+              % ('place' if cli.place else 'drop'), file=sys.stderr)
         return 2
-    if cli.plan_only and cli.place:
+    if cli.plan_only and (cli.place or cli.drop):
         print('--plan-only is a dry run of the pick, and has nothing to say '
-              'about --place', file=sys.stderr)
+              'about --%s' % ('place' if cli.place else 'drop'),
+              file=sys.stderr)
         return 2
 
     rclpy.init(args=args)
@@ -1089,6 +1119,8 @@ def main(args=None):
             node.reset(cli.reset, force=cli.force)
         elif cli.place:
             node.place()
+        elif cli.drop:
+            node.drop()
         elif cli.x is None or cli.y is None or cli.z is None:
             parser.print_usage(sys.stderr)
             node.get_logger().error('give an object position: x y z (metres, '
