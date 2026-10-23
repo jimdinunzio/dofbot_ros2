@@ -619,11 +619,16 @@ class DofbotMoveIt:
         a different, much shorter timer than it closes them, and this has to
         ask for whichever one it actually used.
 
-        NO BRIDGE MEANS NO SERVOS -- simulation -- and nothing to wait for.
+        NO ANSWER MEANS NO WAIT. That is right in simulation, where there is no
+        bridge and no servo, but the bridge also misses this deadline on a busy
+        Jetson while it is driving the jaws perfectly well -- so the log says
+        only what is known, that its timing could not be read.
         """
         if not self._bridge.wait_for_service(timeout_sec=0.5):
             if not self._no_bridge_logged:
-                self.log.info('no %s -- simulation, so not waiting on a servo'
+                self.log.info('could not read %s\'s gripper timing in time; '
+                              'not waiting on the jaws (expected in '
+                              'simulation, where there is no bridge)'
                               % BRIDGE_NODE)
                 self._no_bridge_logged = True
             return 0.0
