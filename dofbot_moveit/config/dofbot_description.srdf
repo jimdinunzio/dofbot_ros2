@@ -46,18 +46,18 @@
         radius; at the measured 0.1596 that pose clears the cylinder by 5.4 mm,
         so that reason no longer stands on its own.-->
     <!--Startup and can-looking pose: folded low and forward, TCP
-        (0.099, 0.001, 0.152), phi=1.955. It clears the CHASSIS OAK-D's view of
+        (0.098, 0.001, 0.095), phi=2.251. It clears the CHASSIS OAK-D's view of
         a can on the floor, which is what it is measured against.
         Posed by hand on the real arm and read with calibrate_zero as servo
-        medians {1: 90.0, 2: 166.0, 3: -12.0, 4: 10.0, 5: 88.0}, which
-        joint_map.servo_to_urdf turns into {0.00, -74.00, 104.00, 82.00, 0.00}
-        degrees. arm3 at 104.00 is past the +-89.95 the other pitch joints
-        carry; arm3_Joint's URDF limit is +108 for this reason.-->
+        medians {1: 90.0, 2: 168.0, 3: -35.0, 4: 11.0, 5: 88.0}, which
+        joint_map.servo_to_urdf turns into {0.00, -76.00, 127.00, 81.00, 0.00}
+        degrees. The arm's parts touch at 127, so arm3 is backed off to 124
+        here; arm3_Joint's URDF limit is +127, that contact.-->
     <group_state name="init" group="arm_group">
         <joint name="arm1_Joint" value="0.0"/>
-        <joint name="arm2_Joint" value="-1.2915"/>
-        <joint name="arm3_Joint" value="1.8151"/>
-        <joint name="arm4_Joint" value="1.4312"/>
+        <joint name="arm2_Joint" value="-1.3265"/>
+        <joint name="arm3_Joint" value="2.1642"/>
+        <joint name="arm4_Joint" value="1.4137"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
     <!--Observation pose: arm up and tucked back, TCP (0.100, 0, 0.322),

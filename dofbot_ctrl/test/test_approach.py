@@ -180,14 +180,18 @@ def test_below_the_near_edge_the_grasp_still_solves():
     """Just inside the edge the arm can still STRIKE the grasp -- it cannot back
     out of it. This is why the failure has to name the standoff: a message that
     blames reach sends you to move the base closer, the wrong direction.
+
+    The strip where that holds narrowed when arm3 went to +127: the edge came
+    in 5 mm, and 2 cm inside it the nominal grip no longer solves at any
+    pitch. 1 cm inside it still does, over a lower band of pitches.
     """
     sweep = _Sweep()
     edge = near_edge()
-    inside = edge - 0.02
+    inside = edge - 0.01
     assert solve(inside) is None
     hover = sweep._hover(CAN)
     struck = [
-        phi for phi in (2.1 + 0.01 * i for i in range(30))
+        phi for phi in (1.9 + 0.01 * i for i in range(50))
         for contact in [scene_objects.grasp_point(CAN, inside, 0.0, FLOOR_Z)]
         if kin.ik_best(*(scene_objects.back_off(contact, phi, hover) + (phi,)))
         is not None]
@@ -220,12 +224,15 @@ def test_the_proven_grip_height_wins_wherever_it_works():
     """The reason the score is quantised: a margin difference of a thousandth of
     a radian is inside the arm's own backlash and must not outvote the height
     proven on hardware. Across the working range the nominal wins nearly always.
+
+    Two exceptions allowed, not one: with arm3 at +127 a lower grip buys enough
+    joint room at 0.21 and 0.25 m to move up a margin bucket and win.
     """
     chosen = [solve(x)[5] for x in (0.21, 0.22, 0.24, 0.25, 0.26, 0.30, 0.33)
               if solve(x) is not None]
     assert chosen
     nominal = sum(1 for h in chosen if h == CAN.grasp_height)
-    assert nominal >= len(chosen) - 1, chosen
+    assert nominal >= len(chosen) - 2, chosen
 
 
 def test_a_chosen_height_is_always_one_the_object_offers():

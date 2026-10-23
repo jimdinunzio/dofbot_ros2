@@ -259,15 +259,14 @@
       link="arm3_Link" />
     <axis
       xyz="0 1 0" />
-    <!-- +108 deg, not the +-90 the other pitch joints carry. The servo drives
+    <!-- +127 deg, not the +-90 the other pitch joints carry. The servo drives
          well past nominal here (the driver writes angles read past 0-180 and
-         clamps only at the raw field bound), and the 'init' pose needs +104 to
-         fold the arm clear of the OAK-D's view. Free travel was observed beyond
-         that but not surveyed, so this is headroom over a hand-verified pose
-         rather than a located mechanical stop. -->
+         clamps only at the raw field bound), and the 'init' pose needs +124 to
+         fold the arm clear of the OAK-D's view. 127 is where the arm's parts
+         touch in that pose, measured by hand: a contact, not headroom. -->
     <limit
       lower="-1.57"
-      upper="1.8850"
+      upper="2.2166"
       effort="10"
       velocity="1000" />
   </joint>
