@@ -11,12 +11,16 @@ The offsets go into joint_map._ZERO_OFFSET. You can read as many times as you
 like (e.g. straight-up for joints 2-5, then a bent pose to judge the base),
 and take each joint's offset from whichever pose shows it best.
 
+With --positions it skips the offsets and just prints where each servo is, in
+servo degrees -- for reading off a pose set by hand.
+
 Owns /dev/ttyTHS1. Stop the mirror and gui_teleop first -- nothing else may
 hold the port. The arm goes limp when torque drops, so support it.
 
-Run:  ros2 run dofbot_ctrl calibrate_zero
+Run:  ros2 run dofbot_ctrl calibrate_zero [--positions]
 """
 
+import argparse
 import statistics
 import time
 
@@ -27,7 +31,7 @@ _SAMPLES = 9
 _CALIBRATABLE = (1, 2, 3, 4, 5)  # servo 6 (gripper) has its own range calibration
 
 
-def read_offsets(arm):
+def sample(arm):
     samples = {sid: [] for sid in range(1, 7)}
     for _ in range(_SAMPLES):
         for sid in range(1, 7):
@@ -35,7 +39,20 @@ def read_offsets(arm):
             if v is not None:
                 samples[sid].append(v)
         time.sleep(0.05)
+    return samples
 
+
+def read_positions(arm):
+    samples = sample(arm)
+    print('  servo   position')
+    for sid in range(1, 7):
+        s = samples[sid]
+        print('    %d    %s' % (sid, '%6.1f' % statistics.median(s) if s
+                                  else '  ----  (no reply)'))
+
+
+def read_offsets(arm):
+    samples = sample(arm)
     print('  servo  n   median  spread   offset')
     offsets = {}
     for sid in range(1, 7):
@@ -52,6 +69,12 @@ def read_offsets(arm):
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        prog='calibrate_zero', description=__doc__.split('\n\n')[1])
+    parser.add_argument('--positions', action='store_true',
+                        help='print servo positions only, no offsets')
+    cli = parser.parse_args()
+
     arm = Arm_Device(com='/dev/ttyTHS1')
     print(__doc__)
     input('Press Enter to DISABLE torque (arm goes limp -- support it)... ')
@@ -60,6 +83,12 @@ def main():
 
     try:
         while True:
+            if cli.positions:
+                input('Pose the arm, hold steady, press Enter to read... ')
+                read_positions(arm)
+                if input('Read again? [y/N] ').strip().lower() != 'y':
+                    break
+                continue
             input('Pose the arm to true zero, hold steady, press Enter to read... ')
             offsets = read_offsets(arm)
             print('\n  _ZERO_OFFSET = {%s}   (servo 6 excluded)\n'
