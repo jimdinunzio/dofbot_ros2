@@ -3,7 +3,7 @@
 """
 Move the arm to one of the saved states, from the command line.
 
-    ros2 run dofbot_ctrl move_to_state ready
+    ros2 run dofbot_ctrl move_to_state stow
     ros2 run dofbot_ctrl move_to_state init
     # let go of whatever is held, then park -- what a shutdown runs
     ros2 run dofbot_ctrl move_to_state --open-gripper init
@@ -15,7 +15,7 @@ Move the arm to one of the saved states, from the command line.
 The same states RViz's MoveIt panel offers, and the same planning: a joint-space
 goal to move_group, planned by OMPL and collision-checked against the live
 planning scene. What this adds over the panel is that it scripts, it logs, and
-it is the same code path a pick takes to 'ready' or 'carry'.
+it is the same code path a pick takes to 'stow'.
 
 The states live in moveit_client.NAMED_STATES and are mirrored into
 dofbot_description.srdf, which is where the RViz panel reads them from.

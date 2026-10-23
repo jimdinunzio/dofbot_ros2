@@ -36,7 +36,7 @@ _INITIAL = os.path.join(os.path.dirname(_SRDF), 'initial_positions.yaml')
 
 # The pose pick_place.launch.py comes up in, and so the pose the bridge's sync
 # move takes the real arm to.
-_STARTUP_STATE = 'init'
+_STARTUP_STATE = 'stow'
 
 needs_srdf = pytest.mark.skipif(
     not os.path.exists(_SRDF),

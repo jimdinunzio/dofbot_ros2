@@ -5,7 +5,7 @@ Pick and place, driven by coordinates rather than by RViz.
 
     # a soda can standing on the floor: (x, y, z) is its CENTRE, so z is half
     # the catalogue height. The extensions want it further out than the stock
-    # jaws did -- see the reach note below. --pick ends holding it, at 'carry'
+    # jaws did -- see the reach note below. --pick ends holding it, at 'stow'
     ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.061
     # then, whenever the caller has decided where it goes
     ros2 run dofbot_ctrl pick_place -- --place
@@ -21,7 +21,7 @@ Pick and place, driven by coordinates rather than by RViz.
     ros2 run dofbot_ctrl pick_place -- --reset
 
 ONE HALF PER INVOCATION. There is no combined form: --pick ends with the object
-held at 'carry' and the process gone, and --place picks that up from the planning
+held at 'stow' and the process gone, and --place picks that up from the planning
 scene whenever the caller is ready. The pause between them is the point -- it is
 where something else decides where the object goes.
 
@@ -35,7 +35,7 @@ caller.
 SEQUENCE
 --------
     add the object to the planning scene, and draw its mesh
-    move_named('ready') + open_gripper
+    open_gripper, wherever the arm is -- normally 'init', after the OAK-D look
     move_pose  to a pre-grasp standoff back along the tool axis  (OMPL plans it)
                -- as long a standoff as the arm has room for, measured
     LOOK: is the object where we were told?          (vision.py; --no-vision)
@@ -43,7 +43,7 @@ SEQUENCE
     close_gripper to the object's grasp width
     attach, with every end-effector link named as a touch link
     cartesian_move straight up, as far as the arm has room for (may be nothing)
-    move_named('carry')       -- THIS is what clears the floor; see min_lift
+    move_named('stow')        -- THIS is what clears the floor; see min_lift
     LOOK: did it come with us?                       (vision.py; --no-vision)
 
 The two LOOKs ask the wrist camera through nanoOWL and abort the pick when the
@@ -53,7 +53,7 @@ approached is the one nearest the image centre because that is where the arm is
 pointed. When the question cannot be asked at all -- no detector running, a
 dark frame -- they say so and the pick carries on. See vision.py.
 
-then place(): over_trash -> open -> detach + remove -> carry. It reads what is
+then place(): over_trash -> open -> detach + remove -> stow. It reads what is
 attached from the planning scene, which is what lets the halves be two separate
 `ros2 run` invocations (--pick, then --place) with no process in common.
 
@@ -190,12 +190,10 @@ MAX_STATE_CHECKS = 10
 # another node, not leftovers. Must match chassis_collision's `object_id`.
 SCENE_FIXTURES = ('robot_chassis',)
 
-# Where a reset leaves the arm. 'init' is folded low and forward, which is what
-# this has to be: reset is what runs after a pick went wrong, and whatever looks
-# for the object next is the OAK-D on the chassis. Parking anywhere with the arm
-# up leaves it standing in that camera's view, so the recovery blinds the thing
-# that has to decide what to do about it.
-RESET_STATE = 'init'
+# Where a reset leaves the arm: 'stow', the pose the robot drives in, clear of
+# the lidar. 'init' is only for the OAK-D's last look at a can just before a
+# pick -- the caller moves there for that, not a reset.
+RESET_STATE = 'stow'
 
 
 def _joint_margin(joints):
@@ -252,10 +250,10 @@ class PickPlace(Node):
         self.declare_parameter('lift', 0.10)          # straight-up retreat, m
         # ADVISORY, NOT A GATE -- below this the pick proceeds and says so.
         # The lift is not what gets the object clear of the floor:
-        # move_named('carry') raises it MONOTONICALLY from the grasp, measured
-        # at x = 0.19, 0.20 and 0.24 as +27 mm of base height in the first tenth
-        # of that move with no dip. The Cartesian lift is only the safest FIRST
-        # few centimetres, worth taking when available.
+        # move_named('stow') does. (The old 'carry' was measured raising it
+        # monotonically from the grasp at x = 0.19, 0.20 and 0.24; stow has not
+        # been measured that way yet.) The Cartesian lift is only the safest
+        # FIRST few centimetres, worth taking when available.
         self.declare_parameter('min_lift', 0.03)
         # How much room the tightest joint should have left, radians. Advisory,
         # but the number to watch: the arm reaches both edges of its working
@@ -266,7 +264,7 @@ class PickPlace(Node):
         # to absorb the error in where the object actually is.
         self.declare_parameter('min_margin', 0.02)
         # Confirm the pick with the wrist camera: once at the standoff that
-        # the object is where it was said to be, once at carry that it came
+        # the object is where it was said to be, once at stow that it came
         # with us. See vision.py -- a check that cannot be asked (no detector
         # running, no light) is not a failure and does not stop a pick, so a
         # machine with the GPU busy elsewhere picks exactly as it always did.
@@ -395,7 +393,7 @@ class PickPlace(Node):
         anything, and checking it rejects perfectly good grasps.
 
         The lift is measured and reported but NOT required -- see the min_lift
-        parameter for why the move to 'carry' is what clears the floor.
+        parameter for why the move to 'stow' is what clears the floor.
         """
         preferred = float(self.get_parameter('grasp_pitch').value)
         lo = float(self.get_parameter('pitch_min').value)
@@ -492,7 +490,7 @@ class PickPlace(Node):
             if lift < min_lift:
                 self.get_logger().warn(
                     'only %.0f mm of straight-up lift here (wanted %.0f). Not '
-                    'fatal -- the move to carry raises the object on its own -- '
+                    'fatal -- the move to stow raises the object on its own -- '
                     'but the first centimetres are not the controlled ones'
                     % (lift * 1e3, want_lift * 1e3))
             # Half the object is behind the contact line, so how far it reaches
@@ -697,9 +695,10 @@ class PickPlace(Node):
                 # like any other object until a real pick allows it.
                 self.mc.allow_collisions(obj.name, GRIPPER_LINKS, False)
 
-        # The can is already in the scene for these two, and deliberately still
-        # forbidden -- the transit to 'ready' has no business passing through it.
-        self.mc.move_named('ready')
+        # Opened where the arm already is -- 'init', where the OAK-D took its
+        # last look -- rather than at a staging pose on the way. The can is
+        # already in the scene and deliberately still forbidden, so the open
+        # jaws and the move to the pre-grasp both keep clear of it.
         self.mc.open_gripper()
 
         # With the object in the scene, the last few centimetres of the approach
@@ -742,18 +741,20 @@ class PickPlace(Node):
         # working ring that can be nothing at all. Skip rather than command a
         # zero-length straight line: plan_cartesian floors itself at two
         # waypoints, so a zero move is a degenerate trajectory to the pose the
-        # arm is already in. move_named('carry') below is what clears the floor
-        # either way -- it raises the object monotonically from the grasp.
+        # arm is already in. move_named('stow') below is what clears the floor
+        # either way.
         if lift > 0.0:
             self.mc.cartesian_move((grasp[0], grasp[1], grasp[2] + lift, phi))
         else:
             self.get_logger().warn(
                 'no straight-up lift available from this grasp; going straight '
-                'to carry, which raises the object on its own')
-        self.mc.move_named('carry')
+                'to stow, which raises the object on its own')
+        # Carried at stow, the same pose the arm drives in empty, to keep it
+        # out of the lidar's view.
+        self.mc.move_named('stow')
 
-        # At carry, not after the lift. The lift ends wherever the arm had room
-        # for it, which is a different pose on every pick; carry is one fixed
+        # At stow, not after the lift. The lift ends wherever the arm had room
+        # for it, which is a different pose on every pick; stow is one fixed
         # posture, which is the whole reason a fixed pixel rectangle can say
         # where a held object has to appear.
         #
@@ -837,7 +838,7 @@ class PickPlace(Node):
             else:
                 self.markers.hide(self.held)
             self.held = None
-        self.mc.move_named('carry')
+        self.mc.move_named('stow')
         self.get_logger().info('placed%s'
                                % (' ' + ', '.join(held) if held else ''))
 
@@ -850,7 +851,7 @@ class PickPlace(Node):
         it got to in the planning scene -- attached to the gripper, if it died
         after the grasp. THE NEXT RUN CANNOT UNDO THAT ON ITS OWN. _clear()
         drops the stale copy, but the sequence then puts a fresh one back in the
-        same place and asks for 'ready' with the jaws still around it, which is
+        same place and plans its first move with the jaws still around it, which is
         a START state in collision. move_group rejects the whole plan as
         INVALID_MOTION_PLAN -- immediately, before OMPL is asked for anything,
         which is what the near-instant failure tells you.
@@ -981,7 +982,7 @@ def main(args=None):
                              'checking -- if MoveIt will not plan from where '
                              'the arm is')
     # One half per invocation, and one of them is required. There is no
-    # combined form: --pick leaves the object held at 'carry' and the process
+    # combined form: --pick leaves the object held at 'stow' and the process
     # gone, and the pause before --place is where the caller decides where the
     # object goes. Mutually exclusive, so argparse rejects the pair itself.
     half = parser.add_mutually_exclusive_group()

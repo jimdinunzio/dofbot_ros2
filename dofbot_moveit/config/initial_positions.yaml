@@ -1,17 +1,17 @@
 # Where the ros2_control fake system starts, and therefore the pose the arm is
-# in the moment pick_place.launch.py comes up: the SRDF 'init' state, folded
-# low and forward so the chassis OAK-D can see a can on the floor. On hardware
+# in the moment pick_place.launch.py comes up: the SRDF 'stow' state, leaned
+# back and tucked so the arm stays out of the lidar's plane. On hardware
 # moveit_bridge's first (sync) write takes the real arm here from wherever it
 # was physically left, so this has to be a pose that is safe to arrive at
 # unattended -- the all-zeros pose is not, it stands the arm straight up.
 #
-# These five arm values are 'init' from dofbot_description.srdf (mirrored in
+# These five arm values are 'stow' from dofbot_description.srdf (mirrored in
 # dofbot_ctrl/moveit_client.py NAMED_STATES); keep all three in step.
 
 initial_positions:
   Rlink1_Joint: 0
   arm1_Joint: 0.0
-  arm2_Joint: -1.3265
-  arm3_Joint: 2.1642
-  arm4_Joint: 1.4137
-  arm5_Joint: 0
+  arm2_Joint: -1.5359
+  arm3_Joint: 1.5359
+  arm4_Joint: 1.5700
+  arm5_Joint: -0.0175

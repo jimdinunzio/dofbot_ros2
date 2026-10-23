@@ -6,7 +6,7 @@ What the arm camera sees, asked of nanoOWL and answered in three values.
 The pick sequence is otherwise blind: it is told where the object is, plans a
 grasp to that coordinate and closes the jaws whether or not anything is there.
 This module is the eye that confirms it -- once at the pre-grasp standoff
-("is the object actually where I was told?") and once at carry ("did it come
+("is the object actually where I was told?") and once at stow ("did it come
 with me?").
 
 THREE VALUES, NOT TWO
@@ -178,8 +178,8 @@ whatever the arm is doing, and only the background moves.
 WHICH IS WHY THIS ANSWER MEANS NOTHING FROM ANOTHER POSE. It is not that some
 poses are less accurate; it is that a pose which can see the floor can see a
 can on the floor, and this check has no way to tell that can from a held one.
-The pick sequence asks at carry. is_holding() can be called at any moment from
-anywhere, and asked at 'ready' over a littered floor it will say held, at 1.000,
+The pick sequence asks at stow. is_holding() can be called at any moment from
+anywhere, and asked at the standoff over a littered floor it will say held, at 1.000,
 with nothing in the jaws.
 
 The measured margins -- 0.99 holding, 0.93 empty -- were taken at a pose with
@@ -824,7 +824,7 @@ def approach(obj, frame=None, url=OWL_URL):
 
 
 def held(obj, frame=None, url=OWL_URL):
-    """Is `obj` still in the jaws? Asked at carry."""
+    """Is `obj` still in the jaws? Asked at stow."""
     return look('held', label_for(obj), frame, url)
 
 

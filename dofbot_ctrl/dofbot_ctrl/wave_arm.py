@@ -5,7 +5,7 @@ Wave the arm -- a greeting gesture, planned and executed like any other move.
 
     ros2 run dofbot_ctrl wave_arm
     ros2 run dofbot_ctrl wave_arm -- --waves 3
-    ros2 run dofbot_ctrl wave_arm -- --seconds 2 --finish carry
+    ros2 run dofbot_ctrl wave_arm -- --seconds 2
 
 Runs against the live pick_place stack: move_group plans the way in, and
 moveit_bridge drives the servos. Nothing here opens the serial port, so the arm
@@ -23,8 +23,8 @@ Three phases, because they want different machinery:
      every waypoint, and a wave that pauses at each end of its swing does not
      read as a wave. The path is known in advance and every waypoint along it is
      checked against the live scene before a byte is sent.
-  3. Back to a named state to finish -- `init`, the folded stow pose, by
-     default. `--finish ""` stops in the raised pose instead.
+  3. Back to a named state to finish -- `stow`, the pose the arm drives in,
+     by default. `--finish ""` stops in the raised pose instead.
 
 The gripper is left alone -- ARM_JOINT_NAMES is the five arm joints, and what
 the jaws are holding is not the wave's business.
@@ -82,7 +82,7 @@ WAVE_A = ((SWING,) + BASE_PITCH[:2]
 WAVE_B = ((-SWING,) + BASE_PITCH[:2]
           + (BASE_PITCH[2] - PITCH_FLICK, -FLICK))
 
-DEFAULT_FINISH = 'init'
+DEFAULT_FINISH = 'stow'
 
 # HOW LONG ONE WAVE TAKES, end to end -- the swing out, the two passes and the
 # swing home, but not the planned moves in and out.

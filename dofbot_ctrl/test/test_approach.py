@@ -265,7 +265,7 @@ def test_a_thin_posture_is_reported_rather_than_hidden():
 
 
 def test_the_lift_is_reported_but_never_required():
-    """The lift is not what clears the floor -- move_named('carry') raises the
+    """The lift is not what clears the floor -- move_named('stow') raises the
     object on its own -- so a pick with no straight-up lift at all must still be
     offered, and said."""
     got = solve(0.35)

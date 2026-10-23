@@ -139,31 +139,36 @@ BRIDGE_OPEN_TIME = 'open_time_ms'
 # arm3_Link/chassis_link contact that held against the 0.165 radius; at 0.1596
 # that pose clears the cylinder by 5.4 mm, so that reason no longer stands.
 #
-# 'ready' was solved with dofbot_kinematics; 'carry' and 'over_trash' are
-# measured on the arm rather than derived. All three are checked against the
-# live planning scene with /check_state_validity (`ros2 run dofbot_ctrl
-# pick_place --check-states`). theta1 is set to exactly zero on the on-axis
-# states rather than to the -0.007 the IK returns; that 0.6 mm lateral tool
-# offset is not worth carrying in a named pose.
+# 'stow' is Jim's too, given as servo angles {1: 90.0, 2: 180.0, 3: 4.0,
+# 4: 1.0, 5: 87.0}, which servo_to_urdf turns into {0.00, -88.00, 88.00,
+# 91.00, -1.00} degrees. arm4 at 91 is past its +-89.95 limit, so it is clamped
+# to the limit (servo 4 at ~2). The servo 6 value given with it, 23, is past
+# the jaws' over-centre open peak and is not used: named states are arm-only,
+# and the jaws stay wherever the last open or close left them.
 #
-# 'carry' and 'over_trash' sit within 0.07 rad of the same phi: a held object
-# keeps the tilt it was grasped at, so moving between them translates the load
-# without tipping it. Both are on-axis, so that move no longer yaws it either.
+# 'stow' replaced both 'carry' and 'ready'. A pick goes from init straight to
+# the pre-grasp, without passing through 'ready', and ends at 'stow' rather
+# than a separate carry pose, so the arm is in one tucked posture whenever the
+# base drives -- empty or holding.
+#
+# 'over_trash' is measured on the arm rather than derived. Every state is
+# checked against the live planning scene with /check_state_validity
+# (`ros2 run dofbot_ctrl pick_place --check-states`).
+#
+# 'stow' and 'over_trash' are 0.42 rad apart in phi, so moving between them
+# tips a held object by that much. The old 'carry' sat within 0.07 rad of
+# 'over_trash' to avoid exactly that; an upright can tolerates the tilt.
 NAMED_STATES = {
     #                theta1  theta2   theta3   theta4  theta5
     'up':         (0.0,     0.0,     0.0,     0.0,    0.0),
     'down':       (0.0,     1.57,    0.0,     0.0,    0.0),
-    # folded low and forward, TCP (0.098, 0.001, 0.095) phi=2.251 -- the startup
-    # and can-looking pose, hand-posed on the real arm; see the note above on arm3
+    # folded low and forward, TCP (0.098, 0.001, 0.095) phi=2.251 -- the
+    # can-looking pose, hand-posed on the real arm; see the note above on arm3
     'init':       (0.0,    -1.3265,  2.1642,  1.4137, 0.0),
-    # arm up and tucked back, TCP (0.100, 0, 0.322) phi=1.0 -- where a pick
-    # begins: the jaws open here before the approach. A pose to PASS THROUGH,
-    # not one to leave the arm in, because at that height it stands in the
-    # OAK-D's view of the floor in front. 'init' is the low pose that keeps
-    # that view clear, and is where a reset parks for exactly that reason.
-    'ready':      (0.0,    -0.7932,  1.2775,  0.5157, 0.0),
-    # arm high and tucked, TCP (0.082, 0.001, 0.325) phi=1.08 -- safe to drive
-    'carry':      (0.0,    -0.718,  0.840,  0.959, 0.0),
+    # leaned back and tucked, TCP (0.063, 0.001, 0.198) phi=1.57 -- the boot
+    # pose, the pose to drive in, and the pose a held can is carried in: it
+    # keeps the arm out of the lidar's view. See the note above on arm4
+    'stow':       (0.0,    -1.5359,  1.5359,  1.5700, -0.0175),
     # release pose, TCP (0.167, 0.001, 0.334) phi=1.15: straight in front and
     # high. The measured posture off the left front, rotated on-axis -- theta1
     # is the only joint that moved, so the height, the tilt and the joint room
