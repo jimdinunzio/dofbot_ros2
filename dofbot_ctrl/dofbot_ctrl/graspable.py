@@ -260,9 +260,15 @@ SODA_CAN = register(GraspableObject(
     # small to mean anything cannot outvote the nominal height.
     #
     # The ends are the straight body of the can: above the base taper, below
-    # where the shoulder starts to draw in at ~105 mm. Gripping outside that is
+    # where the shoulder starts to draw in at 105 mm. Gripping outside that is
     # a curved surface, and the jaw faces are flat.
-    grasp_height_range=(0.070, 0.100),
+    #
+    # The TOP END IS THE NOMINAL, not the 100 the body would allow. The real
+    # grip has landed up to 13 mm from where it was aimed (most of it the can's
+    # distance: the tilted fingers meet it higher the closer it stands), and
+    # 105 mm is a hard ceiling. Aiming no higher than 92 keeps that scatter
+    # under it; the band only ever trades downward.
+    grasp_height_range=(0.070, 0.092),
     symmetric=True,
     # WHAT IS STORED IS A WIDTH, NOT THE ANGLE, because that is the coordinate
     # the rest of the model works in: grip_angle_for interpolates

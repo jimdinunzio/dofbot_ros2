@@ -195,6 +195,34 @@ SCENE_FIXTURES = ('robot_chassis',)
 # pick -- the caller moves there for that, not a reset.
 RESET_STATE = 'stow'
 
+# How much LOWER to aim the grip, by the object's distance from the arm axis:
+# (distance m, aim drop m), ascending. The real grip lands above the aim by an
+# amount that varies with distance -- not monotonically -- and the can's taper
+# starts at 105 mm. Measured with z = 0.061:
+#   0.25 m  aim 92 landed above 105 and fell out; aim 82 landed just under the
+#           taper and held
+#   0.30 m  aim 92 lands ~100, just under the taper, holds
+#   0.34 m  aim 92 landed at the taper edge: held once, dropped once. 87 is
+#           for the same margin as the others, not yet confirmed
+# Interpolated between rows, held flat past either end -- nothing outside
+# 0.25..0.34 has been measured, so extend the table rather than trust the ends.
+GRIP_AIM_DROP = (
+    (0.25, 0.010),
+    (0.30, 0.000),
+    (0.34, 0.005),
+)
+
+
+def _aim_drop(distance):
+    """GRIP_AIM_DROP at `distance`, interpolated, flat past the ends."""
+    rows = GRIP_AIM_DROP
+    if distance <= rows[0][0]:
+        return rows[0][1]
+    for (d0, a0), (d1, a1) in zip(rows, rows[1:]):
+        if distance <= d1:
+            return a0 + (a1 - a0) * (distance - d0) / (d1 - d0)
+    return rows[-1][1]
+
 
 def _joint_margin(joints):
     """How many radians the TIGHTEST joint has left before its own limit.
@@ -648,6 +676,21 @@ class PickPlace(Node):
     def pick(self, x, y, z, name=None, plan_only=False):
         """Pick the object whose CENTRE is at (x, y, z) in base_link."""
         obj = self._object(name)
+        # Shift the preferred height AND its band down together: the band only
+        # ever trades downward from the nominal, so the solver still never aims
+        # above the corrected nominal unless told to.
+        drop = _aim_drop(hypot(x, y))
+        if drop > 0.0:
+            band = obj.grasp_height_range
+            # Rounded to the micrometre: 0.070 - 0.010 is not 0.060 in floats,
+            # and the sweep's own steps then fall outside the band by 1e-17.
+            obj = replace(obj, grasp_height=round(obj.grasp_height - drop, 6),
+                          grasp_height_range=None if band is None
+                          else tuple(round(h - drop, 6) for h in band))
+            self.get_logger().info(
+                'aiming the grip %.0f mm lower at %.3f m out, where the real '
+                'grip lands higher (GRIP_AIM_DROP)'
+                % (drop * 1e3, hypot(x, y)))
         self._clear(obj)
         phi, pre, grasp, lift, hover, height = self._feasible_approach(
             obj, x, y, z)
