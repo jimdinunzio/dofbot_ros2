@@ -116,7 +116,9 @@ class MoveItBridge(Node):
         # The servo's field is 12 bits of milliseconds (protocol 0x2A: time_H is
         # 0x00-0x0F), so anything past 4095 is not a slower close -- it is a
         # different move time entirely, wrapped.
-        self.declare_parameter('grip_time_ms', 2000)   # jaw CLOSE move time
+        # Halved from 2000 to speed the pick up; raise it again if the jaws
+        # start knocking the can rather than closing on it.
+        self.declare_parameter('grip_time_ms', 1000)   # jaw CLOSE move time
         # Jaw OPEN move time. Separate from grip_time_ms because the slow close
         # exists to stop the jaws slamming onto an object, and an open has no
         # object to protect -- three of the four seconds a pick spent waiting on
