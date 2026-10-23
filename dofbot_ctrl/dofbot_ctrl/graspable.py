@@ -60,6 +60,11 @@ class GraspableObject:
                 None (the default) means gripper.DEFAULT_SQUEEZE, resolved at
                 grasp time so it follows a profile swap; a number here is a
                 grip that has been tuned on THIS object on hardware
+    seat_depth  how far in from the fingertip the jaw faces' contact line lands
+                on the object, metres -- for a round object, where its widest
+                point sits along the finger. None (the default) means
+                gripper.throat_offset_for derives it; a number here overrides
+                that with a seating tuned on THIS object on hardware
     vision_label what to show an open-vocabulary detector when asking whether
                 this object is in view, e.g. 'a soda can'. None derives it from
                 the catalogue name, which is already an English description of
@@ -87,6 +92,7 @@ class GraspableObject:
     grasp_height_range: tuple = None
     symmetric: bool = False
     squeeze: float = None
+    seat_depth: float = None
     vision_label: str = field(default=None, compare=False)
     mesh: str = field(default=None, compare=False)
     note: str = field(default='', compare=False)
@@ -135,6 +141,12 @@ class GraspableObject:
             raise ObjectError('%s: squeeze %.4f is negative, which would '
                               'command the jaws WIDER than the object and grip '
                               'nothing' % (self.name, self.squeeze))
+        # Negative would hover the TCP further out than the fingertip lookup,
+        # gripping on air past the end of the finger.
+        if self.seat_depth is not None and self.seat_depth < 0.0:
+            raise ObjectError('%s: seat_depth %.4f is negative, which would '
+                              'seat the object past the fingertip'
+                              % (self.name, self.seat_depth))
 
     # --------------------------------------------------------------- geometry
 
@@ -256,6 +268,12 @@ SODA_CAN = register(GraspableObject(
     # the rest of the model works in: grip_angle_for interpolates
     # grasp_width
     squeeze=0.007,
+    # The can's widest point 10 mm in from the fingertip, set on hardware: the
+    # derived seating clamps to the very tip for a can this wide, and the jaws
+    # were not reaching far enough over it. By the finger model that puts the
+    # back of the can 43 mm into a 40 mm finger, so if the cross bars push the
+    # can, this is the number to bring back down.
+    seat_depth=0.010,
 
     mesh='package://dofbot_description/meshes/cokecan.obj'))
 

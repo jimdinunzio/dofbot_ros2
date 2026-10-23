@@ -351,9 +351,14 @@ def tip_offset_for(width):
     return _interp(width, _R_WIDTHS, _R_OFFSETS)
 
 
-def throat_offset_for(width):
+def throat_offset_for(width, seat_depth=None):
     """Like tip_offset_for, but seating the object against the BACK of the
     finger instead of pinching it at the tip.
+
+    `seat_depth`, when given, replaces the derived advance below with a fixed
+    one: the contact line lands that far in from the fingertip, metres. It is
+    an object's hand-set override (graspable's seat_depth), for when hardware
+    shows the derived seating is wrong for it.
 
     HALF THE OBJECT IS BEHIND THE CONTACT LINE. That is the whole derivation and
     the term two earlier attempts left out. The jaw faces touch a round object at
@@ -401,6 +406,8 @@ def throat_offset_for(width):
     error directions are not symmetric: hovering too far back means a weak grip,
     driving too deep means the arm pushes the object over or stalls into it.
     """
+    if seat_depth is not None:
+        return tip_offset_for(width) - seat_depth
     if FINGER_DEPTH is None:
         return tip_offset_for(width)
     deeper = max(0.0, FINGER_DEPTH - width / 2.0 - BACK_STOP_CLEARANCE)

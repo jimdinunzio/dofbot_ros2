@@ -355,7 +355,7 @@ class PickPlace(Node):
         similar -- it moves whenever the scene does, and "not colliding" is not
         the same as "gripping".
         """
-        return gripper.throat_offset_for(obj.grasp_width)
+        return gripper.throat_offset_for(obj.grasp_width, obj.seat_depth)
 
     def _feasible_approach(self, obj, x, y, z):
         """Choose a grip height, grasp pitch and standoff for the whole sequence.
