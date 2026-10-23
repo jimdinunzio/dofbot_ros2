@@ -811,7 +811,7 @@ class PickPlace(Node):
         # either way.
         if lift > 0.0:
             self.mc.cartesian_move((grasp[0], grasp[1], grasp[2] + lift, phi))
-        else:
+        elif self.get_parameter('lift').value > 0.0:
             self.get_logger().warn(
                 'no straight-up lift available from this grasp; going straight '
                 'to stow, which raises the object on its own')
@@ -1065,6 +1065,10 @@ def main(args=None):
                              'The checks already pass themselves when they '
                              'cannot be asked, so this is for picking against '
                              'a scene the camera deliberately cannot see')
+    parser.add_argument('--no-lift', action='store_true',
+                        help='skip the straight-up lift after the grasp and go '
+                             'directly to stow, which raises the object on its '
+                             'own. The arm strains on that lift')
     parser.add_argument('--force', action='store_true',
                         help='with --reset, drive out blind -- no collision '
                              'checking -- if MoveIt will not plan from where '
@@ -1111,6 +1115,10 @@ def main(args=None):
     node = PickPlace()
     if cli.no_vision:
         node.set_parameters([Parameter('vision', Parameter.Type.BOOL, False)])
+    if cli.no_lift:
+        # min_lift too, or the advisory fires on the lift it was told to skip.
+        node.set_parameters([Parameter('lift', Parameter.Type.DOUBLE, 0.0),
+                             Parameter('min_lift', Parameter.Type.DOUBLE, 0.0)])
     status = 0
     try:
         if cli.check_states:
