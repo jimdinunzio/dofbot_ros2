@@ -673,8 +673,22 @@ class PickPlace(Node):
             raise vision.VisionError(line)
         return sighting
 
+    def _leftovers(self):
+        """Names of what an earlier run left in the scene, fixtures aside."""
+        world, attached = self.mc.object_ids()
+        return list(attached) + [n for n in world if n not in SCENE_FIXTURES]
+
     def pick(self, x, y, z, name=None, plan_only=False):
-        """Pick the object whose CENTRE is at (x, y, z) in base_link."""
+        """Pick the object whose CENTRE is at (x, y, z) in base_link.
+
+        A pick IMPLIES A RESET. Anything an earlier run left in the scene -- a
+        can still attached after a failed pick, one standing where an aborted
+        approach left it -- means the arm may be stopped wherever that run
+        died, so the full reset() runs first: scene cleared, jaws opened, arm
+        to RESET_STATE. A caller retrying therefore just picks again; an
+        explicit --reset is only for giving up. --plan-only never resets,
+        because it must not move the arm.
+        """
         obj = self._object(name)
         # Shift the preferred height AND its band down together: the band only
         # ever trades downward from the nominal, so the solver still never aims
@@ -691,6 +705,13 @@ class PickPlace(Node):
                 'aiming the grip %.0f mm lower at %.3f m out, where the real '
                 'grip lands higher (GRIP_AIM_DROP)'
                 % (drop * 1e3, hypot(x, y)))
+        if not plan_only:
+            left = self._leftovers()
+            if left:
+                self.get_logger().info(
+                    'an earlier run left %s in the scene; resetting before '
+                    'the pick' % ', '.join(repr(n) for n in left))
+                self.reset()
         self._clear(obj)
         phi, pre, grasp, lift, hover, height = self._feasible_approach(
             obj, x, y, z)
@@ -805,7 +826,8 @@ class PickPlace(Node):
         # and that is correct: this process cannot tell a dropped can from a
         # detector that misread one, and detaching on a maybe would leave the
         # scene claiming the floor is clear when a can is lying on it.
-        # reset_arm() is the way out, and it drops what is held where it is.
+        # The next pick resets on its way in, and drops what is held where it
+        # is; reset_arm() does the same for a caller that is giving up.
         self._confirm('held', obj)
 
         self.get_logger().info('picked %s' % obj.name)
