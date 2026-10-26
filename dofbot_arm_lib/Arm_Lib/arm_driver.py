@@ -354,9 +354,14 @@ class Arm_Driver(object):
     # ------------------------------------------------------------------ #
     # Torque switch. 1: enable torque, 0: disable (servo can be moved by hand).
     def Arm_serial_set_torque(self, onoff):
+        # Write-only and unacknowledged, so a servo that misses its packet
+        # gives no sign: on 2026-10-23 servo 1 alone stayed limp through a
+        # bridge restart and ignored every position after. The gap matches the
+        # read retries' and costs 18 ms; callers that must be sure send twice.
         val = 0x01 if onoff == 1 else 0x00
         for sid in range(1, 7):
             self._send(sid, _CMD_WRITE, _ADDR_TORQUE, [val])
+            time.sleep(0.003)
 
     # Set bus servo ID (broadcast). Connect only ONE servo at a time when doing this.
     def Arm_serial_set_id(self, id):

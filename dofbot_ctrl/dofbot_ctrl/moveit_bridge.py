@@ -49,7 +49,9 @@ Design, and why each piece is here:
   during actual execution.
 
 - Torque on at startup, so the servos can hold the commanded positions (a prior
-  mirror/calibrate session may have left torque off).
+  mirror/calibrate session may have left torque off). Sent twice: the packet is
+  unacknowledged, and a servo that misses it IGNORES EVERY POSITION AFTER --
+  on 2026-10-23 servo 1 stayed limp through a restart while the rest synced.
 
 - Optional encoder read-back (`encoder_rate`, default 0 = off). This node is
   the only one that may read the servos while it is running, because it owns
@@ -166,7 +168,7 @@ class MoveItBridge(Node):
                 'will look completely normal while the arm does not move.'
                 % port)
 
-        self.arm.Arm_serial_set_torque(1)  # ensure the arm can hold positions
+        self._torque_on()  # ensure the arm can hold positions
 
         self.target = None        # latest servo command (deg) from /joint_states
         self.last_written = None
@@ -192,6 +194,11 @@ class MoveItBridge(Node):
             '%d ms and open over %d ms (both live via ros2 param set). The '
             'first move is a slow sync to the model pose -- support the arm.'
             % (rate, self.grip_time(), self.grip_time(opening=True)))
+
+    def _torque_on(self):
+        """Torque on for all six, twice -- see the docstring on why twice."""
+        for _ in range(2):
+            self.arm.Arm_serial_set_torque(1)
 
     def grip_time(self, opening=False):
         """The gripper's move time in ms, as it stands right now.
