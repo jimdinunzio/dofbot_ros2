@@ -40,8 +40,8 @@ SEQUENCE
     open_gripper, wherever the arm is -- normally 'init', after the OAK-D look
     move_pose  to a pre-grasp standoff back along the tool axis  (OMPL plans it)
                -- as long a standoff as the arm has room for, measured
-    LOOK: is the object where we were told?          (vision.py; --no-vision)
     cartesian_move straight in to the grasp                      (we plan it)
+    LOOK: is the object between the open jaws?       (vision.py; --no-vision)
     close_gripper to the object's grasp width
     attach, with every end-effector link named as a touch link
     cartesian_move straight up, as far as the arm has room for (may be nothing)
@@ -49,11 +49,12 @@ SEQUENCE
     LOOK: did it come with us?                       (vision.py; --no-vision)
 
 The two LOOKs ask the wrist camera through nanoOWL and abort the pick when the
-answer is a definite no. They need no camera calibration: the can in the jaws
-is the largest box in frame because it is nearest the lens, and the can being
-approached is the one nearest the image centre because that is where the arm is
-pointed. When the question cannot be asked at all -- no detector running, a
-dark frame -- they say so and the pick carries on. See vision.py.
+answer is a definite no. Both are the same question -- is there a can where
+the jaws are? -- asked as a whole-frame classification, so neither needs camera
+calibration. The approach LOOK waits for the grasp pose because that is where
+the camera's view matches the held one it was measured at. When the question
+cannot be asked at all -- no detector running, a dark frame -- they say so and
+the pick carries on. See vision.py.
 
 then place(): over_trash -> open -> detach + remove -> stow. It reads what is
 attached from the planning scene, which is what lets the halves be two separate
@@ -774,21 +775,24 @@ class PickPlace(Node):
 
         self.mc.move_pose(*pre)
 
-        # The last point at which nothing has been touched. From here the arm
-        # slides the open jaws over the object and closes them, and it does
-        # that whether or not the object is really there.
+        self.mc.cartesian_move(grasp)
+
+        # The last point before anything is touched: the jaws are open around
+        # where the object should be, and all that is left is to close them.
+        # Asked here rather than at the standoff because the camera cannot
+        # detect a can from there (see vision.CHECK_USABLE), while from here
+        # its view is the held check's -- the jaws are out of frame either way,
+        # so open around a can looks like closed on one.
         try:
             self._confirm('approach', obj)
         except vision.VisionError:
             # Nothing is grasped and nothing is attached, so the only state to
-            # undo is the allowance made two lines above -- put it back and the
-            # scene is what _clear() expects to find next time. The object
-            # stays in the scene and drawn on purpose: where the pick thought
-            # it was is the first thing worth looking at.
+            # undo is the allowance made before the standoff -- put it back
+            # and the scene is what _clear() expects to find next time. The
+            # object stays in the scene and drawn on purpose: where the pick
+            # thought it was is the first thing worth looking at.
             self.mc.allow_collisions(obj.name, GRIPPER_LINKS, False)
             raise
-
-        self.mc.cartesian_move(grasp)
 
         self.mc.set_gripper(obj.grip_angle())
 

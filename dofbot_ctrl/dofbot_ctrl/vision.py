@@ -5,9 +5,9 @@ What the arm camera sees, asked of nanoOWL and answered in three values.
 
 The pick sequence is otherwise blind: it is told where the object is, plans a
 grasp to that coordinate and closes the jaws whether or not anything is there.
-This module is the eye that confirms it -- once at the pre-grasp standoff
-("is the object actually where I was told?") and once at stow ("did it come
-with me?").
+This module is the eye that confirms it -- once at the grasp pose with the jaws
+still open ("is the object actually where I was told?") and once at stow ("did
+it come with me?").
 
 THREE VALUES, NOT TWO
 ---------------------
@@ -24,11 +24,19 @@ GPU service happens to be running something else. Callers act on ABSENT and log
 UNKNOWN. Vision is a confirmation added to the pick, never a new dependency
 of it.
 
-WHICH DETECTION IS THE ONE THAT MATTERS
----------------------------------------
-The detector is open-vocabulary and returns every can it can see, so each check
-first has to say which of them it is talking about. Neither rule needs the
-camera to be calibrated, and that is why neither is a pixel rectangle:
+BOTH CHECKS ARE ONE CLASSIFICATION
+----------------------------------
+Both ask the same question -- is there a can where the jaws are? -- as a
+whole-frame classification between held_alternatives, from a pose where the
+jaws are around the can: the grasp pose for approach, stow for held. The jaws
+themselves are out of frame (see below), so jaws open around a can and jaws
+closed on one are the same picture, and one measured wording serves both.
+
+The detection machinery further down -- candidates, choose, judge and the
+APPROACH_MAX_OFFSET gate -- is what approach used when it was asked from the
+standoff, before the camera proved unable to detect a can from there. No
+check runs it now; calibrate_view still does, for judging a re-aimed camera.
+The rules it applies, for the record:
 
     held      THE LARGEST BOX. The can in the jaws is nearer the lens than
               anything else in the room, and apparent size goes as 1/distance,
@@ -102,13 +110,13 @@ above -- returned no detection at any score. What this camera does return a can
 for is a can the tool is pointed DOWN at, near the middle of the view; level or
 above, it reports nothing.
 
-So NEITHER check is answerable as the camera is aimed today, by detection at
-least; 'held' survives on classification, which needs no detectable object, and
-CHECK_USABLE below says which is which. The fix is physical, and it is the same
-one for both: aim the camera down and inward by ten or fifteen degrees, so the
-tool axis is nearer the middle of the frame instead of past its edge. Nothing
-in this file needs to change when that happens -- flip the entries in
-CHECK_USABLE back to True.
+So NEITHER check is answerable by detection as the camera is aimed today.
+Both survive on classification, which needs no detectable object, and that is
+why approach is now asked at the grasp pose rather than the standoff: there
+the camera's view is the held view, the one the classification was measured
+on. Aiming the camera down and inward by ten or fifteen degrees would make
+detection work again, but it is a hardware change and nothing here waits on
+it.
 
 CLASSIFICATION: THE SIZE AXIS IS THE ONE THAT WORKS
 ---------------------------------------------------
@@ -290,7 +298,12 @@ MIN_SCORE = 0.1
 # Wordings that name part of the can ('the upper portion of', 'the top of')
 # lose to the whole-can wording on the held frame.
 def held_alternatives(label):
-    """The two worlds the held check chooses between, for this object."""
+    """The two worlds both checks choose between, for this object.
+
+    Named for the held check, where the wording was measured. The approach
+    check asks the same pair at the grasp pose: the jaws are out of frame, so
+    open around a can and closed on one look alike.
+    """
     return ('an empty gripper', 'a gripper holding ' + label)
 
 
@@ -318,7 +331,7 @@ APPROACH_MAX_OFFSET = None
 
 # How long to wait for the detector to answer the frame we pushed, and how
 # often to ask. Inference is a couple of hundred milliseconds; the budget is
-# generous because the arm is standing still at a standoff while it waits, and
+# generous because the arm is standing still at the grasp while it waits, and
 # spending a second there is cheaper than closing the jaws on nothing.
 OWL_TIMEOUT = 3.0
 OWL_POLL = 0.05
@@ -340,27 +353,25 @@ CHECKS = ('approach', 'held')
 # policy knob and not the abort policy -- the same kind of statement as
 # gripper.CALIBRATED.
 #
-# 'held' is answerable by classification, which needs no detectable object.
+# Both are answerable by classification, which needs no detectable object.
 #
-# 'approach' IS NOT, and the table above is why it was expected to be. The
-# geometry there is necessary but not sufficient: it puts the can inside the
-# nominal frame and says nothing about whether the detector fires on it. What
-# the arm camera actually returns a can for is a can the tool is pointed DOWN
-# at, near the middle of the view; level or above, it reports nothing, and the
-# lens sees far less usable scene than a 63-degree horizontal field suggests.
+# 'approach' WAS NOT, while it was a detection asked from the standoff, and the
+# table above is why it was expected to be. The geometry there is necessary
+# but not sufficient: it puts the can inside the nominal frame and says nothing
+# about whether the detector fires on it. Measured 2026-09-11: soda_can called
+# at base_link (0.330, 0.003, 0.039) by the chassis OAK-D, arm at its 80 mm
+# standoff with the can 180 mm from the TCP and 9.6 degrees off the camera
+# axis, and nanoOWL detected nothing at any score down to the 0.10 floor.
 #
-# Measured 2026-09-11: soda_can called at base_link (0.330, 0.003, 0.039) by
-# the chassis OAK-D, arm at its 80 mm standoff with the can 180 mm from the
-# TCP and 9.6 degrees off the camera axis -- inside the frame by the table,
-# and nanoOWL still detected nothing at any score down to the 0.10 floor. The
-# pick aborted on a can that was really there.
-#
-# So the check now passes as UNKNOWN rather than failing picks on a question
-# this camera cannot answer. The fix is the physical one this file already
-# names: aim the camera down and inward by ten or fifteen degrees. Flip this
-# back the moment a frame grabbed from the standoff shows a detection --
-# calibrate_view --detect is what takes that frame.
-CHECK_USABLE = {'approach': False, 'held': True}
+# It is now the held classification asked at the grasp pose, jaws open, where
+# the view matches the one that wording was measured on. NOT YET MEASURED
+# THERE: the held numbers come from stow-like poses, and at the grasp the
+# floor fills the background. A can lying in view counts as present, which
+# fails toward letting the pick run; what has not been seen is how a real can
+# at the grasp scores against CLASSIFY_MIN_SCORE. If picks of cans that are
+# there start aborting, set this back to False and take frames with
+# calibrate_view from the grasp pose.
+CHECK_USABLE = {'approach': True, 'held': True}
 
 
 class VisionError(RuntimeError):
@@ -702,7 +713,8 @@ def choose(check, cands):
 def judge(check, chosen):
     """Does the chosen detection pass this check's gate?
 
-    Approach only -- held is a classification and never reaches here. Returns
+    No check calls this now -- both are classifications; calibrate_view does,
+    for judging detection from a standoff. Returns
     (present, why). A gate that is None is off, and the answer is then the
     presence test that needs no measurement: something of the right label is in
     view. See the gate above for why it defaults off.
@@ -754,72 +766,43 @@ def look(check, label, frame=None, url=OWL_URL):
                                'the lens' % (frame.mean(), MIN_FRAME_MEAN),
                         label)
 
-    if check == 'held':
-        return _look_held(label, frame, url)
-
-    detections, seconds, reason = detect(frame, label, url=url)
-    if detections is None:
-        return _unknown(check, reason, label)
-
-    cands = candidates(detections, label, frame_size(frame))
-    if not cands:
-        return Sighting(ABSENT, check, label, 0.0, None, 0.0, 0.0, 0,
-                        'no %s scoring %.2f or better anywhere in the frame'
-                        % (label, MIN_SCORE), seconds)
-
-    chosen = choose(check, cands)
-    present, why = judge(check, chosen)
-    # Say how many were in frame whenever the rule had to choose. Otherwise a
-    # picture with three cans in it and a wrong answer reads exactly like a
-    # picture with one.
-    among = (' (%d in frame; took the %s)'
-             % (len(cands),
-                'largest' if check == 'held' else 'one nearest the centre')
-             if len(cands) > 1 else '')
-    return Sighting(PRESENT if present else ABSENT, check, label, chosen.score,
-                    list(chosen.box), chosen.width, chosen.offset, len(cands),
-                    '%s at score %.2f, %s%s' % (label, chosen.score, why, among),
-                    seconds)
+    return _look_classified(check, label, frame, url)
 
 
-def _look_held(label, frame, url):
-    """The held check: a classification, not a detection. See CHECKS.
+def _look_classified(check, label, frame, url):
+    """Either check: a classification, not a detection. See CHECKS.
 
-    ONLY MEANINGFUL FROM A POSE WITH NO FLOOR IN FRAME, which is 'carry' and is
-    not most other poses. Classification answers about the whole picture, so a
-    can in the background is a can as far as it is concerned -- measured, one
-    lying in view reads as held at 1.000. Carry points the tool well up and no
-    floor reaches the frame, so the only can that can appear there is the one
-    being held. That is the workaround, and it beats any wording: it removes
-    the scene rather than arguing with it.
-
-    Asked from somewhere that CAN see the floor, this will confidently report a
-    can on the floor as a can in the jaws. See CHECKS.
+    Classification answers about the whole picture, so a can in the background
+    is a can as far as it is concerned -- measured, one lying in view reads as
+    held at 1.000. For the held check that is a missed drop, and the reason it
+    wants a pose with little floor in frame. For the approach check at the
+    grasp pose it lets a pick run with a second can in view, which is the safe
+    direction: what the check is for is coordinates with no can at them.
     """
     alternatives = held_alternatives(label)
     index, score, seconds, reason = classify(frame, alternatives, url=url)
     if index is None:
-        return _unknown('held', reason, label)
+        return _unknown(check, reason, label)
     if not 0 <= index < len(alternatives):
-        return _unknown('held', 'nanoOWL answered with alternative %d, which '
-                                'was not asked' % index, label)
+        return _unknown(check, 'nanoOWL answered with alternative %d, which '
+                               'was not asked' % index, label)
 
     winner = alternatives[index]
     if score < CLASSIFY_MIN_SCORE:
-        return _unknown('held', '%r at %.2f, under the %.2f that separates an '
-                                'answer from a coin flip -- a two-way choice '
-                                'always returns a winner'
-                                % (winner, score, CLASSIFY_MIN_SCORE), label)
+        return _unknown(check, '%r at %.2f, under the %.2f that separates an '
+                               'answer from a coin flip -- a two-way choice '
+                               'always returns a winner'
+                               % (winner, score, CLASSIFY_MIN_SCORE), label)
 
     # The last alternative is the holding one; see held_alternatives.
     holding = index == len(alternatives) - 1
-    return Sighting(PRESENT if holding else ABSENT, 'held', label, score, None,
+    return Sighting(PRESENT if holding else ABSENT, check, label, score, None,
                     0.0, 0.0, 1 if holding else 0,
                     '%r at %.2f' % (winner, score), seconds)
 
 
 def approach(obj, frame=None, url=OWL_URL):
-    """Is `obj` where the pick was told it is? Asked from the standoff."""
+    """Is `obj` where the pick was told it is? Asked at the grasp, jaws open."""
     return look('approach', label_for(obj), frame, url)
 
 

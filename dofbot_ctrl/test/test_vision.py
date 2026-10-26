@@ -389,12 +389,33 @@ def test_a_detector_that_is_not_running_is_unknown_not_absent(monkeypatch):
     assert 'nanoOWL' in sighting.reason
 
 
-def test_nothing_seen_at_all_is_absent(monkeypatch):
+def test_an_empty_view_at_the_grasp_is_absent(monkeypatch):
     """This one IS a negative answer: the view was good and there was no can."""
-    stub_detector(monkeypatch, [])
+    stub_classifier(monkeypatch, 0, 0.93)
     sighting = vision.look('approach', LABEL, frame=lit())
     assert sighting.verdict == vision.ABSENT
     assert sighting.box is None and sighting.seen == 0
+
+
+def test_approach_asks_the_held_question(monkeypatch):
+    """At the grasp the jaws are out of frame, so open around a can looks
+    like closed on one: the same alternatives, the same reading."""
+    asked = []
+    monkeypatch.setattr(vision, 'classify',
+                        lambda frame, alts, **k: (asked.append(alts),
+                                                  (len(alts) - 1, 0.99,
+                                                   0.05, ''))[1])
+    sighting = vision.look('approach', LABEL, frame=lit())
+    assert asked == [vision.held_alternatives(LABEL)]
+    assert sighting.verdict == vision.PRESENT
+
+
+def test_approach_never_runs_the_detector(monkeypatch):
+    """The camera cannot detect a can from where approach is asked."""
+    monkeypatch.setattr(vision, 'detect',
+                        lambda *a, **k: pytest.fail('approach must classify'))
+    stub_classifier(monkeypatch, 1, 0.99)
+    vision.look('approach', LABEL, frame=lit())
 
 
 def test_a_check_the_camera_cannot_see_is_unknown_not_absent(monkeypatch):
@@ -426,27 +447,15 @@ def test_an_unknown_check_name_is_a_programming_error():
 # ----------------------------------------------------------------- reporting
 
 
-def test_the_sighting_carries_what_the_gate_reads(monkeypatch):
-    stub_detector(monkeypatch, [detection(near_can())])
-    sighting = vision.look('approach', LABEL, frame=lit())
-    expected = vision.candidates([detection(near_can())], LABEL, SIZE)[0]
-    assert sighting.width == pytest.approx(expected.width)
-    assert sighting.offset == pytest.approx(expected.offset)
-
-
-def test_how_many_were_in_frame_is_reported(monkeypatch):
-    stub_detector(monkeypatch, [detection(near_can(x=WIDTH * 0.2)),
-                                detection(far_can(x=WIDTH * 0.8))])
-    assert vision.look('approach', LABEL, frame=lit()).seen == 2
-
-
 def test_the_check_name_is_carried_through(monkeypatch):
-    stub_detector(monkeypatch, [])
+    stub_classifier(monkeypatch, 0, 0.93)
+    assert vision.look('approach', LABEL, frame=lit()).check == 'approach'
+    stub_classifier(monkeypatch, None, 0.0, reason='nanoOWL is not answering')
     assert vision.look('approach', LABEL, frame=lit()).check == 'approach'
 
 
 def test_a_sighting_survives_json(monkeypatch):
-    stub_detector(monkeypatch, [detection(near_can())])
+    stub_classifier(monkeypatch, 1, 0.99)
     payload = vision.as_dict(vision.look('approach', LABEL, frame=lit()))
     assert json.loads(json.dumps(payload)) == payload
 

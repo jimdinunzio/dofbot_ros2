@@ -247,25 +247,27 @@ about the grip point, and sees only a sliver of it — as a classification.
 row above, returned no detection at any score down to the 0.10 floor, and the
 pick aborted on a can that was really there. What the wrist camera reliably
 returns a can for is a can the tool is pointed **down** at, near the middle of
-the view; level or above, it reports nothing. `approach` is therefore switched
-off in `vision.CHECK_USABLE` — it answers UNKNOWN, which warns and passes,
-rather than failing picks on a question this camera cannot answer.
+the view; level or above, it reports nothing.
 
-Aiming the camera down and inward by ten or fifteen degrees is the fix, and it
-would let both checks be detections. **It is now the thing that needs it**; the
-code flips back by setting both `CHECK_USABLE` entries True.
+So `approach` moved: it is now asked **at the grasp pose, jaws open**, as the
+same classification `held` uses. From there the camera's view is the held view
+— the jaws are out of frame either way, so open around a can and closed on one
+look alike — and classification needs no detectable object. Aiming the camera
+down and inward by ten or fifteen degrees would make detection work again, but
+nothing waits on that hardware change any more.
 
 ### The two checks work differently, and have to
 
 | check | asks | how |
 |---|---|---|
-| `approach` | is the object where I was told? | **detection** — `[a soda can]`, take the box nearest the image centre |
+| `approach` | is the object between the open jaws? | **classification**, at the grasp pose — the same pair as `held` |
 | `held` | did it come with me? | **classification** — `(an empty gripper, a gripper holding a soda can)` |
 
-`approach` is a detection because at a standoff the target is 15–25° off axis
-and fully in frame: measured, a can on the floor detects at **0.797**. Of the
-cans in view it takes the one **nearest the image centre**, because that is
-where the arm is pointed; others sit off to the sides. No calibration needed.
+`approach` was a detection asked from the standoff, taking the box nearest the
+image centre, until the measurement above showed the camera cannot detect a can
+from there. Its numbers at the grasp pose are **not yet measured**: there the
+floor fills the background, and a second can in view reads as present — the
+safe direction, since the check is for coordinates with nothing at them.
 
 `held` cannot be a detection — the held can is a truncated sliver at the bottom
 edge and detection returns nothing for it under any wording. Classification
@@ -619,9 +621,10 @@ moved on. See `jetson-nano-services/arm-service/README.md`.
   `carry`.** Carry's background is plainer, which should only help, but the
   holding/empty pair wants re-shooting there before 0.99/0.93 are quoted as
   carry's figures.
-- **`APPROACH_MAX_OFFSET` is unset**, so the approach check accepts a can
-  anywhere in frame rather than only near where the arm is pointed. It needs
-  a real standoff frame first; `MIN_SCORE` wants tuning on the same frames.
+- **The approach classification is unmeasured at the grasp pose.** It reuses
+  the held wording on the argument that the views match; a real can at the
+  grasp has not yet been scored against `CLASSIFY_MIN_SCORE`. If picks of cans
+  that are there abort, set `CHECK_USABLE['approach']` back to False.
 - **The classification numbers are one frame per state.** Decisive as far as
   they go, but they want repeating across lighting and can placements.
 - **Execution is open-loop.** MoveIt believes the mock joints, not the encoders.
