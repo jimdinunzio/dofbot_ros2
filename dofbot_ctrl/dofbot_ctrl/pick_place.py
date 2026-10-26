@@ -17,6 +17,9 @@ Pick and place, driven by coordinates rather than by RViz.
     DOFBOT_GRIPPER=stock ros2 run dofbot_ctrl pick_place -- \
         --pick --object test_block 0.22 0.0 0.015
     ros2 run dofbot_ctrl pick_place -- --check-states
+    # save the wrist camera's view at the approach check, named by date and
+    # time, for scoring the check against what was really there
+    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.061 --approach-capture
     # let go where the arm stands and forget what was held; moves nothing
     ros2 run dofbot_ctrl pick_place -- --drop
     # recover after a run that died partway: empty the scene, let go, go home
@@ -167,7 +170,9 @@ holding anything. Check jaw_angle_for(width).
 """
 
 import argparse
+import os
 import sys
+import time
 from dataclasses import replace
 from math import atan2, degrees, hypot, pi
 
@@ -227,6 +232,12 @@ EXIT_NOT_THERE = 4
 
 class NotThereError(vision.VisionError):
     """The approach check at the grasp pose saw no object between the jaws."""
+
+
+# Where --approach-capture saves its frames when not given a directory. In the
+# home directory rather than /tmp, because the point is to collect them across
+# runs and reboots and score the check against them afterwards.
+APPROACH_CAPTURE_DIR = os.path.expanduser('~/dofbot_captures')
 
 
 # How much LOWER to aim the grip, by the object's distance from the arm axis:
@@ -333,6 +344,10 @@ class PickPlace(Node):
         # Turn it off to pick against a scene the camera cannot see, such as a
         # bench test with the arm off the robot.
         self.declare_parameter('vision', True)
+        # Directory to save the wrist camera's frame to at the approach check,
+        # one PNG per pick named by date and time. Empty is off;
+        # --approach-capture turns it on at APPROACH_CAPTURE_DIR.
+        self.declare_parameter('approach_capture', '')
 
         self.mc = DofbotMoveIt(self)
         # Cosmetic only. Every call below sits next to the scene_objects call it
@@ -693,10 +708,18 @@ class PickPlace(Node):
         Returns the Sighting so a caller can report it; None when the check is
         switched off.
         """
+        capture = (self.get_parameter('approach_capture').value
+                   if check == 'approach' else '')
+        # Grabbed here, not by vision, so the frame judged is the frame saved.
+        frame = vision.grab() if capture else None
         if not self.get_parameter('vision').value:
+            if capture:
+                self._save_capture(capture, frame, None)
             return None
-        sighting = (vision.approach(obj) if check == 'approach'
+        sighting = (vision.approach(obj, frame) if check == 'approach'
                     else vision.held(obj))
+        if capture:
+            self._save_capture(capture, frame, sighting.verdict)
         line = vision.describe(sighting)
         if sighting.verdict == vision.PRESENT:
             self.get_logger().info(line)
@@ -706,6 +729,31 @@ class PickPlace(Node):
             self.get_logger().error(line)
             raise (NotHeldError if check == 'held' else NotThereError)(line)
         return sighting
+
+    def _save_capture(self, directory, frame, verdict):
+        """Write `frame` to `directory` as approach_<date>_<time>[_verdict].png.
+
+        The verdict goes in the name so a folder of captures sorts itself into
+        the ones to look at. Never raises: a capture is a record of the pick,
+        and failing to write it must not fail the pick.
+        """
+        if frame is None:
+            self.get_logger().warn('approach capture: the arm camera gave no '
+                                   'frame, nothing saved')
+            return
+        name = 'approach_%s%s.png' % (time.strftime('%Y%m%d_%H%M%S'),
+                                      '_' + verdict if verdict else '')
+        path = os.path.join(directory, name)
+        try:
+            import cv2
+            os.makedirs(directory, exist_ok=True)
+            if not cv2.imwrite(path, frame):
+                raise OSError('cv2.imwrite refused it')
+        except Exception as exc:
+            self.get_logger().warn('approach capture: could not write %s: %s'
+                                   % (path, exc))
+            return
+        self.get_logger().info('approach capture: wrote %s' % path)
 
     def _leftovers(self):
         """Names of what an earlier run left in the scene, fixtures aside."""
@@ -1100,6 +1148,14 @@ def main(args=None):
                              'The checks already pass themselves when they '
                              'cannot be asked, so this is for picking against '
                              'a scene the camera deliberately cannot see')
+    # A plain flag, not one taking an optional DIR: x y z are optional
+    # positionals, so '--approach-capture 0.30 0.0 0.061' would read the x as
+    # the directory. The approach_capture parameter picks another directory.
+    parser.add_argument('--approach-capture', action='store_true',
+                        help='save the wrist camera frame at the approach '
+                             'check, named by date, time and verdict, to %s '
+                             '(or the approach_capture parameter, if set)'
+                             % APPROACH_CAPTURE_DIR)
     parser.add_argument('--no-lift', action='store_true',
                         help='skip the straight-up lift after the grasp and go '
                              'directly to stow, which raises the object on its '
@@ -1150,6 +1206,11 @@ def main(args=None):
     node = PickPlace()
     if cli.no_vision:
         node.set_parameters([Parameter('vision', Parameter.Type.BOOL, False)])
+    if (cli.approach_capture
+            and not node.get_parameter('approach_capture').value):
+        node.set_parameters([Parameter('approach_capture',
+                                       Parameter.Type.STRING,
+                                       APPROACH_CAPTURE_DIR)])
     if cli.no_lift:
         # min_lift too, or the advisory fires on the lift it was told to skip.
         node.set_parameters([Parameter('lift', Parameter.Type.DOUBLE, 0.0),
