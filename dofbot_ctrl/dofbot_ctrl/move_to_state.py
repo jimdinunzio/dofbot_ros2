@@ -24,12 +24,19 @@ are two copies of the same numbers, and they have drifted before.
 
 --open-gripper DROPS WHATEVER IS HELD, where it is, before any move. The order
 is deliberate and is the one `pick_place --reset` uses: parking first would
-carry the object up and drop it from there instead. It is the gripper only --
-an object the planning scene thinks is attached stays attached, which is why
-this is not a substitute for --reset.
+carry the object up and drop it from there instead. It also detaches and
+removes whatever the planning scene has attached, as `pick_place --drop` does
+-- once the jaws are open the object is on the floor, and a scene still
+hanging it from the gripper would carry a phantom can into every move after.
 
-THIS DOES NOT TOUCH THE PLANNING SCENE, and that is the difference between it
-and `pick_place --reset`. A move that fails immediately with
+A HELD OBJECT TRAVELS WITH THE ARM, so a state can be unreachable only because
+of it: 'init' folds the tool low, and a can hanging from it goes into the
+floor. That fails as a goal in collision naming the object, and the fix is to
+let go first -- --open-gripper here, or `pick_place --place` -- not to change
+the state.
+
+OTHERWISE THIS DOES NOT TOUCH THE PLANNING SCENE, and that is the difference
+between it and `pick_place --reset`. A move that fails immediately with
 INVALID_MOTION_PLAN usually means the scene still holds an object from a run
 that died partway: nothing can be planned out of a start state that is inside
 one, because the plan's own first waypoint is invalid. Use `pick_place --reset`
@@ -47,6 +54,7 @@ from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 
 from dofbot_ctrl import dofbot_kinematics as kin
+from dofbot_ctrl import scene_markers
 from dofbot_ctrl.moveit_client import NAMED_STATES, DofbotMoveIt, MoveItError
 
 
@@ -71,10 +79,36 @@ class StateMover(Node):
         self.mc = DofbotMoveIt(self)
 
     def open_gripper(self):
+        """Open the jaws, then forget what the scene says they were holding.
+
+        Scene AFTER jaws, as in pick_place.drop(): a failed open leaves the
+        scene still saying what the gripper holds, which is the truth.
+        """
         self.mc.open_gripper()
+        _world, held = self.mc.object_ids()
+        for name in held:
+            self.get_logger().info('dropped %r: detaching it and removing it '
+                                   'from the scene' % name)
+            self.mc.detach(name)
+            self.mc.remove(name)
+        if held:
+            # Marker ids are per process, so DELETEALL is the only way to
+            # take down what pick_place drew.
+            scene_markers.MeshMarkers(self).clear()
 
     def move(self, name):
-        self.mc.move_named(name)
+        try:
+            self.mc.move_named(name)
+        except MoveItError as exc:
+            _world, held = self.mc.object_ids()
+            hit = [h for h in held if h in str(exc)]
+            if not hit:
+                raise
+            raise MoveItError(
+                '%s -- %r is held, and %r puts it there. Let go first: '
+                'move_to_state --open-gripper %s drops it where the arm is, '
+                'pick_place --place puts it over the trash'
+                % (exc, hit[0], name, name)) from exc
         # FK on the live joints, so this reports where the arm ACTUALLY ended
         # up rather than reprinting the target. On mock joints those are the
         # same thing; on the real arm they are not, and execution is open-loop.
