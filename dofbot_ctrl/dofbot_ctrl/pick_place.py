@@ -60,6 +60,18 @@ then place(): over_trash -> open -> detach + remove -> stow. It reads what is
 attached from the planning scene, which is what lets the halves be two separate
 `ros2 run` invocations (--pick, then --place) with no process in common.
 
+EXIT STATUS
+-----------
+    0    done
+    1    failed -- --reset, then retry or give up
+    2    bad command line
+    3    --pick failed the held check at 'stow'. The wrist camera can misread,
+         so the can may still be in the jaws: worth a second opinion, e.g.
+         from the OAK-D, before treating it as dropped
+    4    --pick failed the approach check: no can between the open jaws at the
+         grasp pose. Nothing was grasped, so a plain --reset is safe
+    130  interrupted
+
 WHAT _feasible_approach ACTUALLY CHOOSES
 ----------------------------------------
 Three things, not one:
@@ -197,6 +209,25 @@ SCENE_FIXTURES = ('robot_chassis',)
 # the lidar. 'init' is only for the OAK-D's last look at a can just before a
 # pick -- the caller moves there for that, not a reset.
 RESET_STATE = 'stow'
+
+# Exit status for a pick that failed the held check. Its own number because it
+# is the one failure where the jaws may still hold the can -- the camera can
+# misread -- so a caller may want a second opinion before acting on it.
+EXIT_NOT_HELD = 3
+
+
+class NotHeldError(vision.VisionError):
+    """The held check at 'stow' said the object is not in the jaws."""
+
+
+# Exit status for a pick that failed the approach check: the object was not
+# where the caller said, which is the caller's news, not the arm's fault.
+EXIT_NOT_THERE = 4
+
+
+class NotThereError(vision.VisionError):
+    """The approach check at the grasp pose saw no object between the jaws."""
+
 
 # How much LOWER to aim the grip, by the object's distance from the arm axis:
 # (distance m, aim drop m), ascending. The real grip lands above the aim by an
@@ -673,7 +704,7 @@ class PickPlace(Node):
             self.get_logger().warn(line)
         else:
             self.get_logger().error(line)
-            raise vision.VisionError(line)
+            raise (NotHeldError if check == 'held' else NotThereError)(line)
         return sighting
 
     def _leftovers(self):
@@ -1143,6 +1174,11 @@ def main(args=None):
                            plan_only=cli.plan_only)
             if cli.plan_only:
                 status = 0 if ok else 1
+    # No log line for these two: _confirm logged the sighting as it raised.
+    except NotHeldError:
+        status = EXIT_NOT_HELD
+    except NotThereError:
+        status = EXIT_NOT_THERE
     except (MoveItError, graspable.ObjectError, gripper.GripperError,
             vision.VisionError) as exc:
         node.get_logger().error(str(exc))
