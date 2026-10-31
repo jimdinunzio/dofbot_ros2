@@ -36,7 +36,7 @@
         <joint name="arm4_Joint" value="0"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
-    <!--The four arm states below are mirrored in dofbot_ctrl/moveit_client.py
+    <!--The five arm states below are mirrored in dofbot_ctrl/moveit_client.py
         (NAMED_STATES); change both together. dofbot_ctrl's
         test/test_named_states.py parses this file and fails if they diverge. Each was validated against the
         live planning scene by `pick_place` in its check-states mode, rather
@@ -60,13 +60,28 @@
         <joint name="arm4_Joint" value="1.4137"/>
         <joint name="arm5_Joint" value="0"/>
     </group_state>
-    <!--Boot, drive and carry pose: leaned back and tucked, TCP
-        (0.063, 0.001, 0.198), phi=1.57, out of the lidar's view. Given as
-        servo angles {1: 90.0, 2: 180.0, 3: 4.0, 4: 1.0, 5: 87.0}, which
+    <!--Mid-pick pose: leaned back and tucked, facing forward, TCP
+        (0.063, 0.001, 0.198), phi=1.57. What lifts a grasped object off the
+        floor, and where a reset leaves the arm for a retry. Given as servo
+        angles {1: 90.0, 2: 180.0, 3: 4.0, 4: 1.0, 5: 87.0}, which
         joint_map.servo_to_urdf turns into {0.00, -88.00, 88.00, 91.00, -1.00}
         degrees; arm4 is clamped to its 89.95 limit.-->
-    <group_state name="stow" group="arm_group">
+    <group_state name="ready" group="arm_group">
         <joint name="arm1_Joint" value="0.0"/>
+        <joint name="arm2_Joint" value="-1.5359"/>
+        <joint name="arm3_Joint" value="1.5359"/>
+        <joint name="arm4_Joint" value="1.5700"/>
+        <joint name="arm5_Joint" value="-0.0175"/>
+    </group_state>
+    <!--Boot, resting, drive and carry pose, and where a pick checks it is
+        holding: 'ready' with the base turned 90 degrees clockwise seen from
+        above, so the arm faces the robot's right, TCP (0.001, -0.063, 0.198). Base servo at 0. It keeps the arm, and a held
+        can, as far inside SLAMWARE's 0.54 m navigation circle as it will go
+        while driving: facing forward the tool sticks out ahead of the mount,
+        turned it lies across it. It stays below the lidar, which sits
+        higher.-->
+    <group_state name="stow" group="arm_group">
+        <joint name="arm1_Joint" value="-1.5708"/>
         <joint name="arm2_Joint" value="-1.5359"/>
         <joint name="arm3_Joint" value="1.5359"/>
         <joint name="arm4_Joint" value="1.5700"/>

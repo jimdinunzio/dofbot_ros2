@@ -139,17 +139,27 @@ BRIDGE_OPEN_TIME = 'open_time_ms'
 # arm3_Link/chassis_link contact that held against the 0.165 radius; at 0.1596
 # that pose clears the cylinder by 5.4 mm, so that reason no longer stands.
 #
-# 'stow' is Jim's too, given as servo angles {1: 90.0, 2: 180.0, 3: 4.0,
+# 'ready' is Jim's too, given as servo angles {1: 90.0, 2: 180.0, 3: 4.0,
 # 4: 1.0, 5: 87.0}, which servo_to_urdf turns into {0.00, -88.00, 88.00,
 # 91.00, -1.00} degrees. arm4 at 91 is past its +-89.95 limit, so it is clamped
 # to the limit (servo 4 at ~2). The servo 6 value given with it, 23, is past
 # the jaws' over-centre open peak and is not used: named states are arm-only,
 # and the jaws stay wherever the last open or close left them.
 #
-# 'stow' replaced both 'carry' and 'ready'. A pick goes from init straight to
-# the pre-grasp, without passing through 'ready', and ends at 'stow' rather
-# than a separate carry pose, so the arm is in one tucked posture whenever the
-# base drives -- empty or holding.
+# 'stow' is 'ready' with base servo 1 at 0 instead of 90: the arm turned 90
+# degrees clockwise seen from above (arm1_Joint's axis is +z), facing the
+# robot's right. It is the boot pose and where the arm rests, and what the base
+# moves in, empty or holding; 'ready' is only a stop inside a pick. THE POINT IS
+# THE ROBOT'S RADIUS: SLAMWARE navigates the robot as a 0.54 m circle, i.e.
+# 0.265 from the wheelbase centre to the end of the arm mount plate, doubled,
+# plus 0.01 for the plate's flat edge -- 0.27 m. Anything outside that circle is
+# something the planner does not know is there. (The chassis collision
+# cylinder is not that circle: it models the decks behind the arm and covers
+# less than the navigation diameter.) Facing forward, the tool and a held can
+# reach out ahead of the mount toward the circle's edge; turned, they lie
+# across the mount instead. Turned, the arm also stays below the lidar, which
+# sits higher. A pick goes from init straight to the pre-grasp, clears the
+# floor at 'ready', and ends at 'stow' to be carried, where it checks the hold.
 #
 # 'over_trash' is measured on the arm rather than derived. Every state is
 # checked against the live planning scene with /check_state_validity
@@ -165,10 +175,14 @@ NAMED_STATES = {
     # folded low and forward, TCP (0.098, 0.001, 0.095) phi=2.251 -- the
     # can-looking pose, hand-posed on the real arm; see the note above on arm3
     'init':       (0.0,    -1.3265,  2.1642,  1.4137, 0.0),
-    # leaned back and tucked, TCP (0.063, 0.001, 0.198) phi=1.57 -- the boot
-    # pose, the pose to drive in, and the pose a held can is carried in: it
-    # keeps the arm out of the lidar's view. See the note above on arm4
-    'stow':       (0.0,    -1.5359,  1.5359,  1.5700, -0.0175),
+    # leaned back and tucked, TCP (0.063, 0.001, 0.198) phi=1.57 -- where a
+    # pick clears the floor and where a reset leaves the arm for a retry. See
+    # the note above on arm4
+    'ready':      (0.0,    -1.5359,  1.5359,  1.5700, -0.0175),
+    # 'ready' turned to face right, TCP (0.001, -0.063, 0.198) -- the boot and
+    # resting pose, and the pose to drive and carry a can in: it keeps the arm
+    # and the can inside the robot's radius as far as it can
+    'stow':       (-1.5708, -1.5359,  1.5359,  1.5700, -0.0175),
     # release pose, TCP (0.167, 0.001, 0.334) phi=1.15: straight in front and
     # high. The measured posture off the left front, rotated on-axis -- theta1
     # is the only joint that moved, so the height, the tilt and the joint room

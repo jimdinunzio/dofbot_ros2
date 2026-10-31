@@ -163,7 +163,7 @@ the 2.05–2.35 band a floor pick actually uses.
 **There is no straight-up lift.** The named move off the grasp is what gets the
 object clear of the floor: interpolating from the grasp to the old `carry` raised
 the can monotonically — measured at x = 0.19, 0.20 and 0.24, the can's base gained
-27 mm in the first tenth of that move and never dipped. `move_named('stow')` does
+27 mm in the first tenth of that move and never dipped. `move_named('ready')` does
 the clearing now, and has not been measured that way yet.
 
 ---
@@ -281,9 +281,9 @@ arguing with it, and it costs nothing, because **raising the arm does not move
 the held can in the image** (camera and jaws are rigidly linked) — only the
 background moves.
 
-**So the answer is meaningful at `carry` and nowhere else.** The pick sequence
+**So the answer is meaningful at `stow` and nowhere else.** The pick sequence
 asks there. `is_holding()` can be called at any moment from any pose, and asked
-at `ready` over a littered floor it will report `held` at 1.000 with empty
+at the standoff over a littered floor it will report `held` at 1.000 with empty
 jaws — not a degraded answer, a confident wrong one.
 
 `CLASSIFY_MIN_SCORE` (0.70) is the one floor: a classification **always**

@@ -23,7 +23,7 @@ Three phases, because they want different machinery:
      every waypoint, and a wave that pauses at each end of its swing does not
      read as a wave. The path is known in advance and every waypoint along it is
      checked against the live scene before a byte is sent.
-  3. Back to a named state to finish -- `stow`, the pose the arm drives in,
+  3. Back to a named state to finish -- `stow`, the pose the arm rests in,
      by default. `--finish ""` stops in the raised pose instead.
 
 The gripper is left alone -- ARM_JOINT_NAMES is the five arm joints, and what

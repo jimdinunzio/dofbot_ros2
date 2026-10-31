@@ -47,7 +47,8 @@ SEQUENCE
     LOOK: is the object between the open jaws?       (vision.py; --no-vision)
     close_gripper to the object's grasp width
     attach, with every end-effector link named as a touch link
-    move_named('stow')        -- THIS is what clears the floor
+    move_named('ready')       -- THIS is what clears the floor
+    move_named('stow')        -- turned to the side, to be carried
     LOOK: did it come with us?                       (vision.py; --no-vision)
 
 The two LOOKs ask the wrist camera through nanoOWL and abort the pick when the
@@ -209,10 +210,11 @@ MAX_STATE_CHECKS = 10
 # another node, not leftovers. Must match chassis_collision's `object_id`.
 SCENE_FIXTURES = ('robot_chassis',)
 
-# Where a reset leaves the arm: 'stow', the pose the robot drives in, clear of
-# the lidar. 'init' is only for the OAK-D's last look at a can just before a
-# pick -- the caller moves there for that, not a reset.
-RESET_STATE = 'stow'
+# Where a reset leaves the arm: 'ready', facing forward, because a reset usually
+# comes before a retry. 'stow' is for resting and driving and 'init' is only for
+# the OAK-D's last look at a can just before a pick -- the caller moves to
+# either, not a reset.
+RESET_STATE = 'ready'
 
 # Exit status for a pick that failed the held check. Its own number because it
 # is the one failure where the jaws may still hold the can -- the camera can
@@ -848,13 +850,16 @@ class PickPlace(Node):
 
         # This is what clears the floor. The old 'carry' was measured raising
         # the object monotonically from the grasp at x = 0.19, 0.20 and 0.24;
-        # stow has not been measured that way yet. Carried here, the same pose
-        # the arm drives in empty, to keep it out of the lidar's view.
+        # ready has not been measured that way yet.
+        self.mc.move_named('ready')
+
+        # Carried at stow, the same pose the arm drives in empty, to keep the
+        # arm and the can as far inside the robot's radius as they will go.
         self.mc.move_named('stow')
 
         # At stow, the end of the pick: one fixed posture, which is the whole
         # reason a fixed pixel rectangle can say where a held object has to
-        # appear.
+        # appear. Its base turn does not change the camera's view of the jaws.
         #
         # An ABSENT here raises with the object still ATTACHED in the scene,
         # and that is correct: this process cannot tell a dropped can from a
