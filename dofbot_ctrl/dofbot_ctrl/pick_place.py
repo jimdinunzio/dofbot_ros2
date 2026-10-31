@@ -47,8 +47,7 @@ SEQUENCE
     LOOK: is the object between the open jaws?       (vision.py; --no-vision)
     close_gripper to the object's grasp width
     attach, with every end-effector link named as a touch link
-    cartesian_move straight up, as far as the arm has room for (may be nothing)
-    move_named('stow')        -- THIS is what clears the floor; see min_lift
+    move_named('stow')        -- THIS is what clears the floor
     LOOK: did it come with us?                       (vision.py; --no-vision)
 
 The two LOOKs ask the wrist camera through nanoOWL and abort the pick when the
@@ -320,14 +319,6 @@ class PickPlace(Node):
         # How finely the grip height is traded. See graspable.grasp_heights --
         # most objects offer no range at all and this does nothing.
         self.declare_parameter('grasp_height_step', 0.005)
-        self.declare_parameter('lift', 0.10)          # straight-up retreat, m
-        # ADVISORY, NOT A GATE -- below this the pick proceeds and says so.
-        # The lift is not what gets the object clear of the floor:
-        # move_named('stow') does. (The old 'carry' was measured raising it
-        # monotonically from the grasp at x = 0.19, 0.20 and 0.24; stow has not
-        # been measured that way yet.) The Cartesian lift is only the safest
-        # FIRST few centimetres, worth taking when available.
-        self.declare_parameter('min_lift', 0.03)
         # How much room the tightest joint should have left, radians. Advisory,
         # but the number to watch: the arm reaches both edges of its working
         # ring by running out of joint, so near either edge every solution sits
@@ -363,24 +354,6 @@ class PickPlace(Node):
         obj.check()
         return obj
 
-    def _reachable_lift(self, grasp, want, step=0.005):
-        """How far straight up the tool can go from `grasp`, at most `want`.
-
-        The lift has to be measured, not assumed. At a steep grasp pitch the
-        reachable band in z is only a few centimetres deep, so a fixed retreat
-        is unreachable about as often as not. Taking what is available and
-        reporting it beats failing the whole pick over the last few mm of a
-        move whose only job is to clear the floor.
-        """
-        best = 0.0
-        d = step
-        while d <= want + 1e-9:
-            if kin.ik_best(grasp[0], grasp[1], grasp[2] + d, grasp[3]) is None:
-                break
-            best = d
-            d += step
-        return best
-
     def _reachable_standoff(self, contact, grasp, phi, hover, want, floor,
                             step=0.005):
         """The longest pre-grasp standoff that solves, at most `want`.
@@ -391,11 +364,11 @@ class PickPlace(Node):
         redundant, because the reachable set is not convex and two good
         endpoints do not imply a good line between them.
 
-        Measured, not assumed -- the same shape as _reachable_lift above, for
-        the same reason. It is not a collision search: see the warning on
-        gripper.throat_offset_for. What it measures is where the arm runs out of
-        joint, which is a fact about the arm and does not move when the scene
-        does.
+        Measured, not assumed: at a steep grasp pitch the reachable band is
+        only a few centimetres deep. It is not a collision search: see the
+        warning on gripper.throat_offset_for. What it measures is where the arm
+        runs out of joint, which is a fact about the arm and does not move when
+        the scene does.
         """
         d = want
         while d >= floor - 1e-9:
@@ -437,7 +410,7 @@ class PickPlace(Node):
     def _feasible_approach(self, obj, x, y, z):
         """Choose a grip height, grasp pitch and standoff for the whole sequence.
 
-        Returns (phi, pre_grasp, grasp, lift, hover, grasp_height) -- poses as
+        Returns (phi, pre_grasp, grasp, hover, grasp_height) -- poses as
         (x, y, z, phi), distances in metres. `grasp` is the TCP target, already
         backed off from the contact point by `hover`. The caller must carry
         `grasp_height` forward, because it is not necessarily the object's
@@ -453,9 +426,8 @@ class PickPlace(Node):
 
         RANKED, NOT FIRST-MATCH, because near the inner edge of the working
         ring "solvable" and "workable" come apart: solutions there sit hard
-        against a joint stop, with no room to approach along a line, no room to
-        lift, and nothing left to absorb the error in where the object actually
-        is. Candidates are scored on _joint_margin and on the standoff they
+        against a joint stop, with no room to approach along a line and nothing
+        left to absorb the error in where the object actually is. Candidates are scored on _joint_margin and on the standoff they
         support, both quantised (see MARGIN_ENOUGH), so once a posture is
         comfortable the tie-breaks return the choice to the preferred grip
         height and pitch.
@@ -468,9 +440,6 @@ class PickPlace(Node):
         the commanded squeeze angle: the object stops the jaws where it is wide,
         so the squeeze angle is a pose the gripper never occupies while holding
         anything, and checking it rejects perfectly good grasps.
-
-        The lift is measured and reported but NOT required -- see the min_lift
-        parameter for why the move to 'stow' is what clears the floor.
         """
         preferred = float(self.get_parameter('grasp_pitch').value)
         lo = float(self.get_parameter('pitch_min').value)
@@ -480,8 +449,6 @@ class PickPlace(Node):
         min_standoff = float(self.get_parameter('min_standoff').value)
         standoff_step = float(self.get_parameter('standoff_step').value)
         height_step = float(self.get_parameter('grasp_height_step').value)
-        want_lift = float(self.get_parameter('lift').value)
-        min_lift = float(self.get_parameter('min_lift').value)
         min_margin = float(self.get_parameter('min_margin').value)
         grip = gripper.jaw_angle_for(obj.grasp_width)
         hover = self._hover(obj)
@@ -508,7 +475,6 @@ class PickPlace(Node):
                     continue
                 reach, pre, margin = got
                 margin = min(margin, _joint_margin(j_grasp))
-                lift = self._reachable_lift(grasp, want_lift)
                 # The epsilon is not decoration: a margin landing exactly on
                 # MARGIN_ENOUGH divides to 4.9999999 and would bucket one step
                 # low, handing the choice to a candidate no better than it.
@@ -517,13 +483,13 @@ class PickPlace(Node):
                        int((min(reach, STANDOFF_ENOUGH) + 1e-9) / STANDOFF_STEP),
                        -round(abs(height - obj.grasp_height), 6),
                        -round(abs(phi - preferred), 6))
-                scored.append((key, height, phi, pre, grasp, lift, reach,
-                               margin, j_grasp))
+                scored.append((key, height, phi, pre, grasp, reach, margin,
+                               j_grasp))
         scored.sort(key=lambda c: c[0], reverse=True)
 
         why = []
         for cand in scored[:MAX_STATE_CHECKS]:
-            _, height, phi, pre, grasp, lift, reach, margin, j_grasp = cand
+            _, height, phi, pre, grasp, reach, margin, j_grasp = cand
             valid, contacts = self.mc.check_state(j_grasp, grip)
             if not valid:
                 why.append('phi=%.2f grip height %.0f mm: %s'
@@ -547,10 +513,10 @@ class PickPlace(Node):
             # means nothing. The warnings below are the ones to act on.
             self.get_logger().info(
                 'approach: phi=%.2f (asked %.2f), grip %.0f mm up the object, '
-                '%.0f mm straight-line approach (wanted %.0f), %.0f mm lift, '
+                '%.0f mm straight-line approach (wanted %.0f), '
                 'tightest joint %.3f rad off its stop'
                 % (phi, preferred, height * 1e3, reach * 1e3, standoff * 1e3,
-                   lift * 1e3, margin))
+                   margin))
             if reach <= min_standoff + 1e-9:
                 self.get_logger().warn(
                     'the straight-line approach is down to its %.0f mm floor. '
@@ -564,12 +530,6 @@ class PickPlace(Node):
                     '%.3f rad worth having. It solves, but there is no room '
                     'left for pose error and the servo may already be against '
                     'its limit' % (margin, min_margin))
-            if lift < min_lift:
-                self.get_logger().warn(
-                    'only %.0f mm of straight-up lift here (wanted %.0f). Not '
-                    'fatal -- the move to stow raises the object on its own -- '
-                    'but the first centimetres are not the controlled ones'
-                    % (lift * 1e3, want_lift * 1e3))
             # Half the object is behind the contact line, so how far it reaches
             # into the finger is that half PLUS whatever the advance was. Worth
             # printing both: the advance is what changed, the reach is what has
@@ -584,7 +544,7 @@ class PickPlace(Node):
                    '%.0f' % (gripper.FINGER_DEPTH * 1e3)
                    if gripper.FINGER_DEPTH is not None else 'an unmeasured',
                    obj.grasp_width))
-            return phi, pre, grasp, lift, hover, height
+            return phi, pre, grasp, hover, height
 
         raise MoveItError(
             'no workable approach to (%.3f, %.3f, %.3f) for %s: %s (swept phi '
@@ -795,7 +755,7 @@ class PickPlace(Node):
                     'the pick' % ', '.join(repr(n) for n in left))
                 self.reset()
         self._clear(obj)
-        phi, pre, grasp, lift, hover, height = self._feasible_approach(
+        phi, pre, grasp, hover, height = self._feasible_approach(
             obj, x, y, z)
 
         # The sweep is allowed to move the grip height within the object's own
@@ -834,7 +794,7 @@ class PickPlace(Node):
             # the same question rather than flagging the grasp itself.
             self.mc.allow_collisions(obj.name, GRIPPER_LINKS, True)
             try:
-                return self._report_plan(obj, pre, grasp, phi, lift, hover)
+                return self._report_plan(obj, pre, grasp, phi, hover)
             finally:
                 # The can stays in the scene to be looked at, but the ACM goes
                 # back: nothing is holding it, so it should obstruct the gripper
@@ -886,26 +846,15 @@ class PickPlace(Node):
         # through the fingers after it is put back down.
         self.mc.allow_collisions(obj.name, GRIPPER_LINKS, False)
 
-        # The lift is whatever the arm had room for, and at the edges of the
-        # working ring that can be nothing at all. Skip rather than command a
-        # zero-length straight line: plan_cartesian floors itself at two
-        # waypoints, so a zero move is a degenerate trajectory to the pose the
-        # arm is already in. move_named('stow') below is what clears the floor
-        # either way.
-        if lift > 0.0:
-            self.mc.cartesian_move((grasp[0], grasp[1], grasp[2] + lift, phi))
-        elif self.get_parameter('lift').value > 0.0:
-            self.get_logger().warn(
-                'no straight-up lift available from this grasp; going straight '
-                'to stow, which raises the object on its own')
-        # Carried at stow, the same pose the arm drives in empty, to keep it
-        # out of the lidar's view.
+        # This is what clears the floor. The old 'carry' was measured raising
+        # the object monotonically from the grasp at x = 0.19, 0.20 and 0.24;
+        # stow has not been measured that way yet. Carried here, the same pose
+        # the arm drives in empty, to keep it out of the lidar's view.
         self.mc.move_named('stow')
 
-        # At stow, not after the lift. The lift ends wherever the arm had room
-        # for it, which is a different pose on every pick; stow is one fixed
-        # posture, which is the whole reason a fixed pixel rectangle can say
-        # where a held object has to appear.
+        # At stow, the end of the pick: one fixed posture, which is the whole
+        # reason a fixed pixel rectangle can say where a held object has to
+        # appear.
         #
         # An ABSENT here raises with the object still ATTACHED in the scene,
         # and that is correct: this process cannot tell a dropped can from a
@@ -918,10 +867,9 @@ class PickPlace(Node):
         self.get_logger().info('picked %s' % obj.name)
         return obj
 
-    def _report_plan(self, obj, pre, grasp, phi, lift, hover):
+    def _report_plan(self, obj, pre, grasp, phi, hover):
         """Everything pick() would do, checked but not commanded."""
-        steps = [('pre-grasp', pre), ('grasp', grasp),
-                 ('lift', (grasp[0], grasp[1], grasp[2] + lift, phi))]
+        steps = [('pre-grasp', pre), ('grasp', grasp)]
         ok = True
         for label, pose in steps:
             joints = kin.ik_best(*pose)
@@ -1156,10 +1104,6 @@ def main(args=None):
                              'check, named by date, time and verdict, to %s '
                              '(or the approach_capture parameter, if set)'
                              % APPROACH_CAPTURE_DIR)
-    parser.add_argument('--no-lift', action='store_true',
-                        help='skip the straight-up lift after the grasp and go '
-                             'directly to stow, which raises the object on its '
-                             'own. The arm strains on that lift')
     parser.add_argument('--force', action='store_true',
                         help='with --reset, drive out blind -- no collision '
                              'checking -- if MoveIt will not plan from where '
@@ -1211,10 +1155,6 @@ def main(args=None):
         node.set_parameters([Parameter('approach_capture',
                                        Parameter.Type.STRING,
                                        APPROACH_CAPTURE_DIR)])
-    if cli.no_lift:
-        # min_lift too, or the advisory fires on the lift it was told to skip.
-        node.set_parameters([Parameter('lift', Parameter.Type.DOUBLE, 0.0),
-                             Parameter('min_lift', Parameter.Type.DOUBLE, 0.0)])
     status = 0
     try:
         if cli.check_states:

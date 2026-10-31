@@ -573,9 +573,9 @@ class DofbotMoveIt:
         rather than as several plan/execute round trips that stop dead between
         segments. Returns (points, times) ready for execute().
 
-        pick_place does not use this yet -- its approach and lift are separated
-        by the gripper closing, so there is nothing to smooth across. It is here
-        for the case where consecutive segments really are continuous.
+        pick_place does not use this -- it has one Cartesian segment, the
+        approach, so there is nothing to smooth across. It is here for the
+        case where consecutive segments really are continuous.
         """
         points = [p for seg in segments for p in seg]
         return points, self.time_parameterize(points, start=start,

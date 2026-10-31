@@ -292,14 +292,6 @@ Only the ranked survivors cost a `/check_state_validity` call, at most
 `MAX_STATE_CHECKS` of them, and each is checked **with the jaws at
 `jaw_angle_for(width)`**.
 
-Then `_reachable_lift` measures how far straight up the tool can actually go —
-another lookup-by-measurement rather than a fixed 100 mm, because at a steep
-pitch the reachable band in z is only a few centimetres deep. **It is reported,
-never required.** Gating on it would reject good grasps for a step that is not
-load-bearing: interpolating from the grasp to `carry` raises the can
-monotonically, +27 mm of base height in the first tenth of the move and never a
-dip, measured at x = 0.19, 0.20 and 0.24. Step 10 clears the floor on its own.
-
 **3. Add to the scene** — after the search, before the `plan_only` branch. Not
 earlier or the search rejects everything; not later or `--plan-only` checks its
 poses against a world with no object in it.
@@ -326,10 +318,11 @@ one, else `DEFAULT_SQUEEZE`.
 again — the attached object's `touch_links` now cover finger contact, and leaving
 the allowance would let the object pass through the fingers after it's put down.
 
-**10. `cartesian_move` straight up** by the measured lift — which may be zero —
-then **`move_named('carry')`**, which is what actually gets the object clear of
-the floor. The Cartesian lift is the *controlled* first few centimetres, not the
-clearing move; see step 2.
+**10. `move_named('stow')`** gets the object clear of the floor, with no
+straight-up move first. Interpolating from the grasp to the old `carry` raised
+the can monotonically, +27 mm of base height in the first tenth of the move and
+never a dip, measured at x = 0.19, 0.20 and 0.24; `stow` has not been measured
+that way yet. The held check follows there.
 
 `place()`: `over_trash` → open → detach + remove → `carry`.
 

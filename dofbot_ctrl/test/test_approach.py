@@ -6,9 +6,9 @@ The approach search: which pitch, grip height and standoff a pick chooses.
 WHAT THESE ARE ABOUT is the difference between "solvable" and "workable". A
 grasp near the inner edge of the working ring solves and is still useless: the
 arm arrives there folded up against a joint stop, with no room to back out
-along a line, no room to lift, and nothing left to absorb the error in where the
-object really is. So these check joint margin and the length of the approach,
-not just whether ik_best returned something.
+along a line, and nothing left to absorb the error in where the object really
+is. So these check joint margin and the length of the approach, not just whether
+ik_best returned something.
 
 Written as RELATIONS against the module's own constants rather than against
 remembered numbers -- the near edge is derived by scanning, not pinned, so
@@ -52,7 +52,7 @@ class _Sweep(pick_place.PickPlace):
         self._params = dict(
             grasp_pitch=2.2, pitch_min=pi / 2.0, pitch_max=pi, pitch_step=0.01,
             standoff=0.08, min_standoff=0.02, standoff_step=0.005,
-            grasp_height_step=0.005, lift=0.10, min_lift=0.03, min_margin=0.02)
+            grasp_height_step=0.005, min_margin=0.02)
         self._params.update(override)
         self.logged = []
         self.mc = types.SimpleNamespace(
@@ -72,7 +72,7 @@ class _Sweep(pick_place.PickPlace):
 
 
 def solve(x, **override):
-    """(phi, pre, grasp, lift, hover, height) or None if nothing works."""
+    """(phi, pre, grasp, hover, height) or None if nothing works."""
     try:
         return _Sweep(**override)._feasible_approach(CAN, x, 0.0, FLOOR_Z)
     except pick_place.MoveItError:
@@ -228,7 +228,7 @@ def test_the_proven_grip_height_wins_wherever_it_works():
     Two exceptions allowed, not one: with arm3 at +127 a lower grip buys enough
     joint room at 0.21 and 0.25 m to move up a margin bucket and win.
     """
-    chosen = [solve(x)[5] for x in (0.21, 0.22, 0.24, 0.25, 0.26, 0.30, 0.33)
+    chosen = [solve(x)[4] for x in (0.21, 0.22, 0.24, 0.25, 0.26, 0.30, 0.33)
               if solve(x) is not None]
     assert chosen
     nominal = sum(1 for h in chosen if h == CAN.grasp_height)
@@ -240,7 +240,7 @@ def test_a_chosen_height_is_always_one_the_object_offers():
         got = solve(x)
         if got is None:
             continue
-        assert got[5] in CAN.grasp_heights()
+        assert got[4] in CAN.grasp_heights()
 
 
 def test_the_choice_has_joint_room_across_the_working_range():
@@ -249,7 +249,7 @@ def test_the_choice_has_joint_room_across_the_working_range():
     for x in (0.22, 0.24, 0.26, 0.28, 0.30):
         got = solve(x)
         assert got is not None, x
-        _phi, pre, grasp, _lift, _hover, _height = got
+        _phi, pre, grasp, _hover, _height = got
         for pose in (pre, grasp):
             joints = kin.ik_best(*pose)
             assert joints is not None
@@ -264,26 +264,12 @@ def test_a_thin_posture_is_reported_rather_than_hidden():
     assert any('joint stop' in m for m in warned), warned
 
 
-def test_the_lift_is_reported_but_never_required():
-    """The lift is not what clears the floor -- move_named('stow') raises the
-    object on its own -- so a pick with no straight-up lift at all must still be
-    offered, and said."""
-    got = solve(0.35)
-    assert got is not None
-    lift = got[3]
-    assert lift >= 0.0
-    sweep = _Sweep(min_lift=1.0)           # more than any pose can give
-    assert sweep._feasible_approach(CAN, 0.26, 0.0, FLOOR_Z) is not None
-    warned = [m for level, m in sweep.logged if level == 'warn']
-    assert any('lift' in m for m in warned), warned
-
-
 def test_the_returned_grasp_is_the_contact_point_backed_off_by_the_hover():
     """The one relation the whole sequence rests on: the TCP target is NOT the
     grasp point. Getting the sign wrong drives the arm into the object."""
     got = solve(0.26)
     assert got is not None
-    phi, _pre, grasp, _lift, hover, height = got
+    phi, _pre, grasp, hover, height = got
     at_height = pick_place.replace(CAN, grasp_height=height)
     contact = scene_objects.grasp_point(at_height, 0.26, 0.0, FLOOR_Z)
     assert grasp[:3] == pytest.approx(

@@ -129,10 +129,9 @@ and reported "no workable approach" for a pose the arm reaches comfortably.
 
 **It chooses three things.** Along with phi it picks the *grip height*, from
 whatever band the catalogue entry allows, and the *standoff* — how long the final
-straight-line approach is. Both are measured rather than demanded, the same shape
-as `_reachable_lift`, which measures how far straight up the tool can actually
-go. (`ik_best` is the third instance: it tries both elbow branches and keeps the
-one nearest the seed.)
+straight-line approach is. Both are measured rather than demanded. (`ik_best` is
+the same shape: it tries both elbow branches and keeps the one nearest the
+seed.)
 
 **The standoff is what sets the near edge, not the reach.** The grasp alone
 solves from 0.164 m out; demanding a full 80 mm standoff at the same pitch walls
@@ -161,12 +160,11 @@ own backlash cannot outvote the grip height proven on hardware. `grasp_pitch` is
 a tie-break among comfortable postures, not a starting point; at 2.2 it sits in
 the 2.05–2.35 band a floor pick actually uses.
 
-**The lift is measured and reported, never required.** It is not what gets the
-object clear of the floor: interpolating from the grasp to `carry` raises the can
-monotonically — measured at x = 0.19, 0.20 and 0.24, the can's base gains 27 mm
-in the first tenth of that move and never dips. `move_named('carry')` does the
-clearing; the Cartesian lift is only the safest *first* few centimetres, worth
-taking when available and not worth failing a pick over.
+**There is no straight-up lift.** The named move off the grasp is what gets the
+object clear of the floor: interpolating from the grasp to the old `carry` raised
+the can monotonically — measured at x = 0.19, 0.20 and 0.24, the can's base gained
+27 mm in the first tenth of that move and never dipped. `move_named('stow')` does
+the clearing now, and has not been measured that way yet.
 
 ---
 
