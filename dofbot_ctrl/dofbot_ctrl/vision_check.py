@@ -6,6 +6,12 @@ Ask the arm camera one question and print the answer.
     ros2 run dofbot_ctrl vision_check -- --held
     ros2 run dofbot_ctrl vision_check -- --approach --object test_block
     ros2 run dofbot_ctrl vision_check -- --held --label 'a beer can'
+    ros2 run dofbot_ctrl vision_check -- --warm-up
+
+--warm-up asks nothing and opens no camera. It loads what nanoOWL needs for a
+classification, so the first check of a pick does not time out paying for it;
+arm_server.enable_arm() runs it. It exits 0 when nanoOWL is warm and 1 when it
+could not be reached.
 
 This is the process `arm_server.is_holding()` runs. It takes no ROS parameters
 and builds no node -- there is nothing to plan, only a camera to open and a
@@ -45,6 +51,9 @@ def main(argv=None):
     which.add_argument('--approach', action='store_true',
                        help='is the object where the pick was told it is? '
                             'Meaningful only from a pre-grasp standoff')
+    which.add_argument('--warm-up', action='store_true',
+                       help='load nanoOWL\'s classifier now, so the first '
+                            'check of a pick does not time out on it')
     parser.add_argument('--object', default='soda_can',
                         help='catalogue entry to look for (default soda_can)')
     parser.add_argument('--label', default='',
@@ -66,6 +75,12 @@ def main(argv=None):
         except graspable.ObjectError as exc:
             print(exc, file=sys.stderr)
             return 2
+
+    if cli.warm_up:
+        ok, seconds, reason = vision.warm_up(label, url=cli.url)
+        print('nanoOWL warm (%.1fs)' % seconds if ok
+              else 'nanoOWL not warmed: %s' % reason)
+        return 0 if ok else 1
 
     sighting = vision.look(check, label, url=cli.url)
 

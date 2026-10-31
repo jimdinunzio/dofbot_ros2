@@ -353,6 +353,24 @@ def test_the_previous_prompt_is_put_back(monkeypatch):
     assert owl.prompt == '[a bin]'
 
 
+def test_warm_up_sets_the_held_classification_and_puts_the_prompt_back(
+        monkeypatch):
+    owl = FakeOwl([])
+    owl.prompt = '[a bin]'
+    monkeypatch.setattr(vision, 'connect', lambda *a, **k: owl)
+
+    ok, _seconds, why = vision.warm_up(LABEL)
+    assert ok and why == ''
+    assert owl.prompts_set == ['(%s)' % ', '.join(
+        vision.held_alternatives(LABEL)), '[a bin]']
+
+
+def test_warm_up_with_no_detector_says_so(monkeypatch):
+    monkeypatch.setattr(vision, 'connect', lambda *a, **k: None)
+    ok, _seconds, why = vision.warm_up(LABEL)
+    assert not ok and 'nanoOWL' in why
+
+
 def test_a_stale_answer_from_another_client_is_ignored(monkeypatch):
     """Somebody else's frame, right prompt, wrong seq."""
     ours = vision._prompt(LABEL)

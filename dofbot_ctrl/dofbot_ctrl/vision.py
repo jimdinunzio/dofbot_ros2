@@ -340,6 +340,13 @@ OWL_POLL = 0.05
 # hang the pick. This bounds the XML-RPC socket, not the detection.
 OWL_CONNECT_TIMEOUT = 2.0
 
+# The socket timeout for warm_up(). The first classification prompt a nanoOWL
+# process sees loads CLIP's text encoder inside set_prompt: measured
+# 2026-10-25, about 3 s, past OWL_CONNECT_TIMEOUT -- so a pick's approach
+# check that happened to be first came back UNKNOWN, 'timed out'. Later
+# prompts encode in well under a second, until nanoOWL restarts.
+OWL_WARMUP_TIMEOUT = 30.0
+
 # JPEG quality for the pushed frame. The detector runs on a 640x480 image;
 # there is no reason to spend bandwidth beyond what the encoder recovers.
 JPEG_QUALITY = 85
@@ -610,6 +617,39 @@ def ask(frame, prompt, url=OWL_URL, timeout=OWL_TIMEOUT):
                     pass
     except Exception as exc:
         return None, 0.0, 'nanoOWL call failed: %s' % exc
+
+
+def warm_up(label, url=OWL_URL, timeout=OWL_WARMUP_TIMEOUT):
+    """Pay nanoOWL's first-classification cost now, not during a pick.
+
+    Sets the held classification prompt for `label` with a socket timeout
+    long enough to outlast loading CLIP (see OWL_WARMUP_TIMEOUT), then puts
+    the previous prompt back. Needs no camera: the cost is in encoding the
+    prompt, not in any frame.
+
+    Returns (ok, seconds, reason).
+    """
+    proxy = connect(url, timeout)
+    if proxy is None:
+        return False, 0.0, 'nanoOWL is not answering at %s' % url
+    prompt = '(%s)' % ', '.join(held_alternatives(label))
+    started = time.time()
+    try:
+        previous = proxy.get_prompt() or ''
+        if not proxy.set_prompt(prompt):
+            return False, time.time() - started, ('nanoOWL rejected %r; the '
+                                                  'reason is in the server log'
+                                                  % prompt)
+        seconds = time.time() - started
+        # As in ask(): a courtesy to whoever set it, and not worth failing on.
+        if previous and previous != prompt:
+            try:
+                proxy.set_prompt(previous)
+            except Exception:
+                pass
+        return True, seconds, ''
+    except Exception as exc:
+        return False, time.time() - started, 'nanoOWL call failed: %s' % exc
 
 
 def classify(frame, alternatives, url=OWL_URL, timeout=OWL_TIMEOUT):
