@@ -92,7 +92,7 @@
         on-axis - theta1 is the only joint that moved. A PLACEHOLDER for a bin
         perception has yet to find: it assumes a rim below ~0.3 m, 0.167 m out,
         which is barely past the chassis.-->
-    <group_state name="over_trash" group="arm_group">
+    <group_state name="trash" group="arm_group">
         <joint name="arm1_Joint" value="0.0"/>
         <joint name="arm2_Joint" value="0.229"/>
         <joint name="arm3_Joint" value="-0.025"/>

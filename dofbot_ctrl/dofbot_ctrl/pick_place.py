@@ -59,7 +59,7 @@ the camera's view matches the held one it was measured at. When the question
 cannot be asked at all -- no detector running, a dark frame -- they say so and
 the pick carries on. See vision.py.
 
-then place(): over_trash -> open -> detach + remove -> stow. It reads what is
+then place(): trash -> open -> detach + remove -> stow. It reads what is
 attached from the planning scene, which is what lets the halves be two separate
 `ros2 run` invocations (--pick, then --place) with no process in common.
 
@@ -901,7 +901,7 @@ class PickPlace(Node):
 
     # ------------------------------------------------------------------ place
 
-    def place(self, state='over_trash'):
+    def place(self, state='trash'):
         """Release whatever is held over the named drop pose.
 
         What is being carried is read from the PLANNING SCENE when this process

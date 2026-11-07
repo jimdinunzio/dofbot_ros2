@@ -547,7 +547,7 @@ python3 -m pytest src/dofbot_ros2/dofbot_ctrl/test/ -q
 
 ## Named poses
 
-`up`, `down`, `init`, `ready`, `carry`, `over_trash` — defined in **two places
+`up`, `down`, `init`, `ready`, `carry`, `trash` — defined in **two places
 that must agree**: `NAMED_STATES` in `moveit_client.py` and the `group_state`
 entries in `dofbot_description.srdf`.
 
@@ -556,7 +556,7 @@ planning scene. This is what stops a pose being eyeballed: the vendor's original
 `init` collided with `chassis_link` and nobody noticed until it was checked.
 
 `init` was hand-posed on the real arm and read out with `calibrate_zero`, so its
-joint values are physical fact. `over_trash` is a **placeholder for a detected
+joint values are physical fact. `trash` is a **placeholder for a detected
 bin**: the posture was measured on the arm off the left front, then rotated
 on-axis (`theta1` is the only joint that moved), so it now drops straight in
 front at TCP (0.167, 0.001, 0.334). It assumes a rim below ~0.3 m and 0.167 m
@@ -612,7 +612,7 @@ moved on. See `jetson-nano-services/arm-service/README.md`.
   (the table was swept closing, and grasps close, so the normal path matches),
   and the object does not sit on the gripper centreline — but `scene_objects`
   attaches it symmetrically, so a small pose error is carried into the place.
-- **The place target is a fixed pose, not a found one.** `over_trash` drops
+- **The place target is a fixed pose, not a found one.** `trash` drops
   straight in front at 0.167 m; nothing looks for the bin, and `place()` takes
   no coordinates. This is the next thing perception plugs into after `pick()`.
 - **The held numbers were measured at a pose with floor in view, not at

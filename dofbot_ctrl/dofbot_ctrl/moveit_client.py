@@ -161,13 +161,13 @@ BRIDGE_OPEN_TIME = 'open_time_ms'
 # sits higher. A pick goes from init straight to the pre-grasp, clears the
 # floor at 'ready', and ends at 'stow' to be carried, where it checks the hold.
 #
-# 'over_trash' is measured on the arm rather than derived. Every state is
+# 'trash' is measured on the arm rather than derived. Every state is
 # checked against the live planning scene with /check_state_validity
 # (`ros2 run dofbot_ctrl pick_place --check-states`).
 #
-# 'stow' and 'over_trash' are 0.42 rad apart in phi, so moving between them
+# 'stow' and 'trash' are 0.42 rad apart in phi, so moving between them
 # tips a held object by that much. The old 'carry' sat within 0.07 rad of
-# 'over_trash' to avoid exactly that; an upright can tolerates the tilt.
+# 'trash' to avoid exactly that; an upright can tolerates the tilt.
 NAMED_STATES = {
     #                theta1  theta2   theta3   theta4  theta5
     'up':         (0.0,     0.0,     0.0,     0.0,    0.0),
@@ -192,7 +192,7 @@ NAMED_STATES = {
     # below ~0.3 m, 0.167 m out in front, which is barely past the chassis; the
     # bin's real position is to come from perception, and place() will take
     # coordinates the way pick() does. Until then this is where it drops.
-    'over_trash': (0.0,   0.229, -0.025,  0.942, 0.0),
+    'trash':      (0.0,   0.229, -0.025,  0.942, 0.0),
 }
 
 

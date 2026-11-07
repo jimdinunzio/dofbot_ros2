@@ -8,7 +8,7 @@ moveit_client.py, which is what pick_place and move_to_state plan against.
     pytest src/dofbot_ros2/dofbot_ctrl/test/test_named_states.py
 
 Two copies of the same numbers drift, and drift silently: retuning 'carry' and
-'over_trash' on the arm changed the Python and left the SRDF alone, so the RViz
+'trash' on the arm changed the Python and left the SRDF alone, so the RViz
 dropdown sent the arm to one posture and a pick sent it to another. Nothing
 caught it, because nothing compared them. This does.
 

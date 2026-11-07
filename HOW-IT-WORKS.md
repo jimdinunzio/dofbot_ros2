@@ -324,7 +324,7 @@ the can monotonically, +27 mm of base height in the first tenth of the move and
 never a dip, measured at x = 0.19, 0.20 and 0.24; `ready` has not been measured
 that way yet. Then **`move_named('stow')`** to be carried, and the held check.
 
-`place()`: `over_trash` → open → detach + remove → `stow`.
+`place()`: `trash` → open → detach + remove → `stow`.
 
 ---
 
