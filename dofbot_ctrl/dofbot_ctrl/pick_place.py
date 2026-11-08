@@ -3,16 +3,19 @@
 """
 Pick and place, driven by coordinates rather than by RViz.
 
-    # a soda can standing on the floor: (x, y, z) is its CENTRE, so z is half
-    # the catalogue height. The extensions want it further out than the stock
-    # jaws did -- see the reach note below. --pick ends holding it, at 'stow'
-    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.061
+    # a soda can standing on the floor: (x, y, z) is its CENTRE in base_link,
+    # whose z=0 is the arm plate's underside, NOT the floor. So z is the floor
+    # height plus half the catalogue height: -0.026 + 0.061 = 0.035 on a hard
+    # floor (the contest surface), -0.022 + 0.061 = 0.039 on carpet. The
+    # extensions want it further out than the stock jaws did -- see the reach
+    # note below. --pick ends holding it, at 'stow'
+    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.035
     # then, whenever the caller has decided where it goes
     ros2 run dofbot_ctrl pick_place -- --place
     # solve and collision-check the pick without moving. Leaves the can standing
     # in the planning scene and drawn in RViz, so this is also how you park a
     # target to look at it.
-    ros2 run dofbot_ctrl pick_place -- --plan-only 0.30 0.0 0.061
+    ros2 run dofbot_ctrl pick_place -- --plan-only 0.30 0.0 0.035
     # the test block needs the stock jaws; the extensions cannot close on it
     DOFBOT_GRIPPER=stock ros2 run dofbot_ctrl pick_place -- \
         --pick --object test_block 0.22 0.0 0.015
@@ -21,7 +24,7 @@ Pick and place, driven by coordinates rather than by RViz.
     ros2 run dofbot_ctrl pick_place -- --check-states
     # save the wrist camera's view at the approach check, named by date and
     # time, for scoring the check against what was really there
-    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.061 --approach-capture
+    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.035 --approach-capture
     # let go where the arm stands and forget what was held; moves nothing
     ros2 run dofbot_ctrl pick_place -- --drop
     # recover after a run that died partway: empty the scene, let go, go home
@@ -1156,7 +1159,7 @@ def main(args=None):
                         help='skip the look at stow that the object came '
                              'with the arm (on by default)')
     # A plain flag, not one taking an optional DIR: x y z are optional
-    # positionals, so '--approach-capture 0.30 0.0 0.061' would read the x as
+    # positionals, so '--approach-capture 0.30 0.0 0.035' would read the x as
     # the directory. The approach_capture parameter picks another directory.
     parser.add_argument('--approach-capture', action='store_true',
                         help='save the wrist camera frame at the approach '

@@ -501,13 +501,13 @@ ros2 launch dofbot_ctrl pick_place.launch.py
 
 # then, in another terminal
 ros2 run dofbot_ctrl pick_place -- --check-states
-ros2 run dofbot_ctrl pick_place -- --plan-only 0.30 0.0 0.039
+ros2 run dofbot_ctrl pick_place -- --plan-only 0.30 0.0 0.035
 
 # one half per invocation, and one of --pick/--place is required. --pick ends
 # holding the object at 'carry'; what is being carried lives in the planning
 # scene until --place, so the two share no process and the pause between them
 # is where the caller decides where the object goes
-ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.039   # upright can on carpet
+ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.035   # upright can, hard floor
 ros2 run dofbot_ctrl pick_place -- --place
 
 # recovery after a run that died partway: clear the scene, let go, and park at
@@ -579,7 +579,7 @@ drives is the same one a terminal drives. It finds this workspace through
 
 ```bash
 ~/Documents/git/jetson-nano-services/arm-service/start_arm_server.sh   # or the unit
-python3 arm_client.py --url http://192.168.55.1:8001/ pick 0.30 0.0 0.039
+python3 arm_client.py --url http://192.168.55.1:8001/ pick 0.30 0.0 0.035
 ```
 
 `enable_arm`, `disable_arm`, `pick_can`, `place_can`, `move_to_state`,

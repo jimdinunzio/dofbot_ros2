@@ -23,11 +23,12 @@ then, in another terminal:
 
     ros2 run dofbot_ctrl pick_place -- --check-states
     # x y z is the object CENTRE in base_link: the floor height plus half the
-    # object's own HEIGHT. 0.039 is an upright 122 mm can on carpet
-    # (-0.022 + 0.061); 0.30 is where the can wants to be, not the closest it
-    # can sit -- see jetson-nano-services/arm-service/README.md,
+    # object's own HEIGHT. 0.035 is an upright 122 mm can on a hard floor
+    # (-0.026 + 0.061), the contest surface; 0.039 on carpet. 0.30 is where
+    # the can wants to be, not the closest it can sit -- see
+    # jetson-nano-services/arm-service/README.md,
     # "Where to put the robot"
-    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.039
+    ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.035
     ros2 run dofbot_ctrl pick_place -- --place
 
 This is dofbot_moveit's demo.launch.py plus moveit_bridge, with two nodes
