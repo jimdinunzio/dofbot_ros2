@@ -109,3 +109,21 @@ def test_mock_hardware_starts_in_the_startup_state(joint):
     ours = dict(zip(moveit_client.ARM_JOINT_NAMES,
                     moveit_client.NAMED_STATES[_STARTUP_STATE]))
     assert initial[joint] == pytest.approx(ours[joint], abs=1e-9)
+
+
+# ------------------------------------------------- move_to_state --where
+
+
+def test_every_saved_state_is_recognised_as_itself():
+    from dofbot_ctrl.move_to_state import state_of
+    from dofbot_ctrl.moveit_client import NAMED_STATES
+    for name, joints in NAMED_STATES.items():
+        assert state_of(joints) == name
+
+
+def test_a_pose_between_states_is_none():
+    from dofbot_ctrl.move_to_state import STATE_TOLERANCE, state_of
+    from dofbot_ctrl.moveit_client import NAMED_STATES
+    off = list(NAMED_STATES['stow'])
+    off[0] += 2 * STATE_TOLERANCE
+    assert state_of(off) is None

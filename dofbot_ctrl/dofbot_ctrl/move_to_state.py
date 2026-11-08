@@ -11,6 +11,9 @@ Move the arm to one of the saved states, from the command line.
     ros2 run dofbot_ctrl move_to_state --open-gripper
     # names, joint values and where the tool ends up -- needs nothing running
     ros2 run dofbot_ctrl move_to_state --list
+    # which saved state is the arm in now? prints `STATE: <name>` or
+    # `STATE: none`; needs the stack up, moves nothing
+    ros2 run dofbot_ctrl move_to_state --where
 
 The same states RViz's MoveIt panel offers, and the same planning: a joint-space
 goal to move_group, planned by OMPL and collision-checked against the live
@@ -56,6 +59,30 @@ from rclpy.utilities import remove_ros_args
 from dofbot_ctrl import dofbot_kinematics as kin
 from dofbot_ctrl import scene_markers
 from dofbot_ctrl.moveit_client import NAMED_STATES, DofbotMoveIt, MoveItError
+
+# The one line --where prints for a program to read. Everything else it prints
+# is for a human.
+STATE_PREFIX = 'STATE: '
+
+# How close every joint must be to a saved state to count as in it, radians.
+# /joint_states is ros2_control's mock hardware, i.e. the commanded position,
+# so an arm that finished a move to a state is on it exactly; this only absorbs
+# float noise. About half a degree -- far below the gap between any two states.
+STATE_TOLERANCE = 0.01
+
+
+def state_of(joints, tolerance=STATE_TOLERANCE):
+    """The saved state `joints` is in, or None if it is in none of them.
+
+    Every joint must be within `tolerance`. If two states ever overlapped at
+    that tolerance the nearer one wins, but none do.
+    """
+    best, best_err = None, None
+    for name, target in NAMED_STATES.items():
+        err = max(abs(q - t) for q, t in zip(joints, target))
+        if err <= tolerance and (best_err is None or err < best_err):
+            best, best_err = name, err
+    return best
 
 
 def print_states(out=sys.stdout):
@@ -117,6 +144,17 @@ class StateMover(Node):
             'at %r: tcp (%.3f, %.3f, %.3f) phi=%.3f roll=%.3f'
             % (name, x, y, z, phi, roll))
 
+    def where(self):
+        """Print which saved state the arm is in, as STATE_PREFIX + name."""
+        joints = self.mc.current_joints()
+        name = state_of(joints)
+        self.get_logger().info('joints %s: %s'
+                               % (['%.3f' % q for q in joints],
+                                  'at %r' % name if name
+                                  else 'not at any saved state'))
+        print('%s%s' % (STATE_PREFIX, name or 'none'), flush=True)
+        return name
+
 
 def main(args=None):
     parser = argparse.ArgumentParser(
@@ -131,6 +169,9 @@ def main(args=None):
                         help='open the jaws first, dropping whatever is held '
                              'where it is. STATE becomes optional: on its own '
                              'this lets go and moves nothing')
+    parser.add_argument('--where', action='store_true',
+                        help="print which saved state the arm is in, as "
+                             "'STATE: <name>' or 'STATE: none'; moves nothing")
     cli = parser.parse_args(remove_ros_args(sys.argv)[1:])
 
     # Both of these are settled before rclpy.init, so a typo costs nothing and
@@ -138,7 +179,11 @@ def main(args=None):
     if cli.list:
         print_states()
         return 0
-    if cli.state is None and not cli.open_gripper:
+    if cli.where and (cli.state is not None or cli.open_gripper):
+        print('--where moves nothing; give it no state and no --open-gripper',
+              file=sys.stderr)
+        return 2
+    if cli.state is None and not cli.open_gripper and not cli.where:
         parser.print_usage(sys.stderr)
         print('give a state name: %s' % ', '.join(sorted(NAMED_STATES)),
               file=sys.stderr)
@@ -152,6 +197,8 @@ def main(args=None):
     node = StateMover()
     status = 0
     try:
+        if cli.where:
+            node.where()
         # Jaws before wheels: see --open-gripper in the docstring.
         if cli.open_gripper:
             node.open_gripper()
