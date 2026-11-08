@@ -272,8 +272,9 @@ SODA_CAN = register(GraspableObject(
     symmetric=True,
     # WHAT IS STORED IS A WIDTH, NOT THE ANGLE, because that is the coordinate
     # the rest of the model works in: grip_angle_for interpolates
-    # grasp_width
-    squeeze=0.007,
+    # grasp_width. Raised 10% from 7 mm on 2026-11-08 for a firmer hold: the
+    # can slid out at stow on a grip that also landed low.
+    squeeze=0.0077,
     # The can's widest point 10 mm in from the fingertip, set on hardware: the
     # derived seating clamps to the very tip for a can this wide, and the jaws
     # were not reaching far enough over it. By the finger model that puts the
