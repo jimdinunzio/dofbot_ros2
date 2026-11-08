@@ -46,8 +46,11 @@ STOP gui_teleop AND joint_state_mirror BEFORE LAUNCHING THIS ON HARDWARE.
 moveit_bridge needs exclusive access to the serial port.
 """
 
+import os
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
+                            LogInfo)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -69,6 +72,14 @@ def generate_launch_description():
         'dofbot_description', package_name='dofbot_moveit').to_moveit_configs()
 
     ld = LaunchDescription()
+
+    # The collision floor is baked into the URDF from DOFBOT_FLOOR, and a wrong
+    # one fails silently until a lifted can meets it. Said first so every launch
+    # log -- by hand or through arm_server -- records which surface it modelled.
+    # Same fallback as chassis.xacro: unset or unrecognised is hard.
+    floor = os.environ.get('DOFBOT_FLOOR', '')
+    ld.add_action(LogInfo(msg='DOFBOT_FLOOR=%s -> %s floor' % (
+        floor or '(unset)', 'carpet' if floor == 'carpet' else 'hard')))
 
     ld.add_action(DeclareLaunchArgument(
         'bridge', default_value='true', choices=['true', 'false'],

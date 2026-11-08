@@ -450,12 +450,13 @@ robot_origin -> base_link      xyz = 0.265  0  <ground>      rpy = 0 0 0
 **The z is not a constant.** The wheels sink, so a soft surface drops the whole
 robot and brings the ground *closer* to the plate. Carpet is the smaller number
 for exactly that reason. `DOFBOT_FLOOR` selects it (see `chassis.xacro`);
-unset means carpet, which is where picking is currently tested.
+unset means hard floor, the contest surface and the only one picking is
+tested on from contest prep on.
 
-Getting that env var wrong is not symmetric. Carpet's 22 mm models the ground
-*higher* than a hard floor really is, which only costs 4 mm of low reach.
-The hard-floor number on carpet puts the collision plane *below* the real
-surface and lets the gripper plan into it.
+Getting that env var wrong fails both ways. The hard-floor number on carpet
+puts the collision plane *below* the real surface and lets the gripper plan
+into it. Carpet's number on a hard floor leaves a standing can 4 mm inside the
+floor, so the move up after the grasp starts in collision.
 
 ---
 
