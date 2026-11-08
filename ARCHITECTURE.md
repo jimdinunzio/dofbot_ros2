@@ -258,8 +258,8 @@ nothing waits on that hardware change any more.
 
 | check | asks | how |
 |---|---|---|
-| `approach` | is the object between the open jaws? | **classification**, at the grasp pose — the same pair as `held` |
-| `held` | did it come with me? | **classification** — `(an empty gripper, a gripper holding a soda can)` |
+| `approach` | is the object between the open jaws? | **classification** of the whole frame, at the grasp pose — `(an empty gripper, a gripper holding a soda can)` |
+| `held` | did it come with me? | **classification of the bottom-centre crop**, at `stow` — `(a close-up of a can filling the picture, a small can on the floor, a floor)` |
 
 `approach` was a detection asked from the standoff, taking the box nearest the
 image centre, until the measurement above showed the camera cannot detect a can
@@ -267,24 +267,26 @@ from there. Its numbers at the grasp pose are **not yet measured**: there the
 floor fills the background, and a second can in view reads as present — the
 safe direction, since the check is for coordinates with nothing at them.
 
-`held` cannot be a detection — the held can is a truncated sliver at the bottom
-edge and detection returns nothing for it under any wording. Classification
-needs no detectable object, and measured on the sliver it returns **0.992
-holding / 0.927 empty**.
+`held` is a classification of **the bottom-centre of the frame** (bottom half,
+middle 70% — `vision.HELD_CROP`), and it asks **how big the can there is**,
+not whether there is one. At `stow` the camera looks level and the floor is in
+frame, so a whole-frame classification called every empty frame with a can in
+view held, at 0.80–0.98. But with the jaws empty, the only cans in view are
+further away and come out small, while a held can fills that region — however
+high it was gripped, and whatever its label. Only the close-up answer means
+held. Measured 2026-11-08 on nine stow frames (four held, five empty with and
+without a far can): all right, held at 0.79–1.00, empty at 0.81–0.95, and no
+empty frame choosing the close-up at all. The wording is fixed rather than
+built from the object's label: *a close-up of a soda can…* dropped a low,
+tilted held can to 0.53.
 
-**The held check requires a pose with no floor in frame, and `carry` is one** —
-it points the tool well up, so the only can that can appear is the one being
-held. That is what makes the question answerable, because classification reads
-the *whole picture* and cannot tell a can in the jaws from one lying behind it:
-measured, one in view reads as held at **1.000**. Designing the scene out beats
-arguing with it, and it costs nothing, because **raising the arm does not move
-the held can in the image** (camera and jaws are rigidly linked) — only the
-background moves.
+Naming *a floor* breaks the old no-background rule below, deliberately: at
+`stow` the bottom of the view is always floor.
 
 **So the answer is meaningful at `stow` and nowhere else.** The pick sequence
-asks there. `is_holding()` can be called at any moment from any pose, and asked
-at the standoff over a littered floor it will report `held` at 1.000 with empty
-jaws — not a degraded answer, a confident wrong one.
+asks there. Labelled frames live in `~/held_frames/` as `stow_held_*.png` /
+`stow_empty_*.png`; `ros2 run dofbot_ctrl rescore_held` scores the live check
+against them and is the test for any change to the crop or the wording.
 
 `CLASSIFY_MIN_SCORE` (0.70) is the one floor: a classification **always**
 returns a winner, so below it the answer is `unknown` rather than a verdict.
@@ -616,10 +618,9 @@ moved on. See `jetson-nano-services/arm-service/README.md`.
 - **The place target is a fixed pose, not a found one.** `trash` drops
   straight in front at 0.167 m; nothing looks for the bin, and `place()` takes
   no coordinates. This is the next thing perception plugs into after `pick()`.
-- **The held numbers were measured at a pose with floor in view, not at
-  `carry`.** Carry's background is plainer, which should only help, but the
-  holding/empty pair wants re-shooting there before 0.99/0.93 are quoted as
-  carry's figures.
+- **The held check rests on nine frames.** The weakest is a low, tilted grip
+  at 0.79 against a 0.70 floor; more grips like that, and empty frames with a
+  can nearer the robot, are the frames worth adding to `~/held_frames/`.
 - **The approach classification is unmeasured at the grasp pose.** It reuses
   the held wording on the argument that the views match; a real can at the
   grasp has not yet been scored against `CLASSIFY_MIN_SCORE`. If picks of cans
