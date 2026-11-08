@@ -16,6 +16,8 @@ Pick and place, driven by coordinates rather than by RViz.
     # the test block needs the stock jaws; the extensions cannot close on it
     DOFBOT_GRIPPER=stock ros2 run dofbot_ctrl pick_place -- \
         --pick --object test_block 0.22 0.0 0.015
+    # would it plan? exit 0 yes, 1 no with the reason; moves and leaves nothing
+    ros2 run dofbot_ctrl pick_place -- --check 0.30 0.0 0.035
     ros2 run dofbot_ctrl pick_place -- --check-states
     # save the wrist camera's view at the approach check, named by date and
     # time, for scoring the check against what was really there
@@ -872,6 +874,35 @@ class PickPlace(Node):
         self.get_logger().info('picked %s' % obj.name)
         return obj
 
+    def check(self, x, y, z, name=None):
+        """Would pick(x, y, z) plan? Moves nothing and leaves nothing behind.
+
+        --plan-only for a caller that is deciding whether to commit, not
+        looking at RViz: the same approach search and the same collision checks
+        against the live scene, then the object is taken back out, so the next
+        real pick finds no leftover to reset over (which would move the arm).
+
+        Refuses while anything is attached. A real pick would reset first and
+        drop it; a check must not, and a scene with a held can in it answers a
+        different question from the one the pick will face.
+        """
+        _world, attached = self.mc.object_ids()
+        if attached:
+            raise MoveItError('holding %s: place, drop or reset first -- a '
+                              'pick would drop it before planning'
+                              % ', '.join(repr(n) for n in attached))
+        obj = self._object(name)
+        try:
+            ok = self.pick(x, y, z, name, plan_only=True)
+        finally:
+            world, _ = self.mc.object_ids()
+            if obj.name in world:
+                self.mc.remove(obj.name)
+            self.markers.hide(obj)
+        self.get_logger().info('check (%.3f, %.3f, %.3f): %s'
+                               % (x, y, z, 'can pick' if ok else 'CANNOT pick'))
+        return ok
+
     def _report_plan(self, obj, pre, grasp, phi, hover):
         """Everything pick() would do, checked but not commanded."""
         steps = [('pre-grasp', pre), ('grasp', grasp)]
@@ -885,14 +916,17 @@ class PickPlace(Node):
                        kin.describe(*pose)))
                 ok = False
                 continue
-            valid = self.mc.state_valid(joints, verbose=True)
+            valid, contacts = self.mc.check_state(joints)
             ok = ok and valid
-            self.get_logger().info(
+            # ERROR when it fails, so the line a caller lifts out of the log
+            # as the reason names the pose and what it hit.
+            (self.get_logger().info if valid else self.get_logger().error)(
                 '%-10s (%.3f, %.3f, %.3f) phi=%.2f -> %s  %s  (%.3f rad off '
                 'the nearest joint stop)'
                 % (label, pose[0], pose[1], pose[2], pose[3],
                    ['%.3f' % q for q in joints],
-                   'ok' if valid else 'IN COLLISION', _joint_margin(joints)))
+                   'ok' if valid else 'IN COLLISION: %s' % contacts,
+                   _joint_margin(joints)))
         held = scene_objects.held_pose(obj, phi, 0.0, hover)
         self.get_logger().info(
             'held pose in arm5_Link: (%.4f, %.4f, %.4f) quat (%.3f, %.3f, '
@@ -1089,6 +1123,11 @@ def main(args=None):
     parser.add_argument('--plan-only', action='store_true',
                         help='solve and collision-check the sequence, move '
                              'nothing; leaves the object in the scene and drawn')
+    parser.add_argument('--check', action='store_true',
+                        help='--plan-only that leaves nothing behind: exit 0 '
+                             'if the pick would plan, 1 (with the reason '
+                             'logged) if not. For a caller deciding whether '
+                             'to commit to a grasp')
     parser.add_argument('--check-states', action='store_true',
                         help='validate every named state and exit')
     parser.add_argument('--reset', nargs='?', const=RESET_STATE, default=None,
@@ -1132,12 +1171,13 @@ def main(args=None):
 
     # All settled before rclpy.init, so a bad command line costs nothing and
     # says what the choices are rather than starting a node to find out.
-    modes = (cli.check_states, cli.reset, cli.plan_only, cli.pick, cli.place,
-             cli.drop)
+    modes = (cli.check_states, cli.reset, cli.plan_only, cli.check, cli.pick,
+             cli.place, cli.drop)
     if not any(modes):
         parser.print_usage(sys.stderr)
-        print('give a mode: --pick x y z, --place, --drop, --plan-only x y z, '
-              '--reset or --check-states', file=sys.stderr)
+        print('give a mode: --pick x y z, --place, --drop, '
+              '--plan-only x y z, --check x y z, --reset or --check-states',
+              file=sys.stderr)
         return 2
     if (cli.place or cli.drop) and (cli.x is not None or cli.y is not None
                                     or cli.z is not None):
@@ -1145,9 +1185,11 @@ def main(args=None):
               'already holding, wherever that came from'
               % ('place' if cli.place else 'drop'), file=sys.stderr)
         return 2
-    if cli.plan_only and (cli.place or cli.drop):
-        print('--plan-only is a dry run of the pick, and has nothing to say '
-              'about --%s' % ('place' if cli.place else 'drop'),
+    if (cli.plan_only or cli.check) and (cli.place or cli.drop or cli.pick):
+        print('--%s is a dry run of the pick, and has nothing to say '
+              'about --%s' % ('check' if cli.check else 'plan-only',
+                              'place' if cli.place else
+                              'drop' if cli.drop else 'pick'),
               file=sys.stderr)
         return 2
 
@@ -1175,6 +1217,8 @@ def main(args=None):
             node.get_logger().error('give an object position: x y z (metres, '
                                     'base_link, object CENTRE)')
             status = 2
+        elif cli.check:
+            status = 0 if node.check(cli.x, cli.y, cli.z, cli.object) else 1
         else:
             ok = node.pick(cli.x, cli.y, cli.z, cli.object,
                            plan_only=cli.plan_only)
