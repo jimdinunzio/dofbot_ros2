@@ -27,6 +27,9 @@ Pick and place, driven by coordinates rather than by RViz.
     ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.035 --approach-capture
     # let go where the arm stands and forget what was held; moves nothing
     ros2 run dofbot_ctrl pick_place -- --drop
+    # hand it a can: open, wait 5 s for it to be put between the fingers, then
+    # close to the can grip and hold it as if picked; moves nothing
+    ros2 run dofbot_ctrl pick_place -- --grip --grip-delay 5
     # recover after a run that died partway: empty the scene, let go, go home
     ros2 run dofbot_ctrl pick_place -- --reset
 
@@ -225,6 +228,9 @@ RESET_STATE = 'ready'
 # is the one failure where the jaws may still hold the can -- the camera can
 # misread -- so a caller may want a second opinion before acting on it.
 EXIT_NOT_HELD = 3
+
+# Seconds --grip waits with the jaws open for the object to be handed over.
+GRIP_DELAY = 5.0
 
 
 class NotHeldError(vision.VisionError):
@@ -1028,6 +1034,46 @@ class PickPlace(Node):
                                % (' ' + ', '.join(held) if held
                                   else ' (nothing attached)'))
 
+    def grip(self, name=None, delay=GRIP_DELAY):
+        """Take an object handed to the jaws: open, wait, close, hold.
+
+        No motion. The jaws open, the arm waits `delay` seconds for someone to
+        put the object between the fingers, then closes to the object's own
+        grip angle -- the same squeeze a pick uses -- and attaches it, so the
+        scene is what a pick leaves: --place, --drop and --reset release it,
+        and the next move plans with it in the jaws.
+
+        Placed in the scene as if gripped at its catalogue grasp height with
+        its axis world-vertical, which is a guess about how it was handed over;
+        it only has to be close enough for collision checking.
+
+        Refuses while anything is attached: opening would drop it first.
+        """
+        _world, attached = self.mc.object_ids()
+        if attached:
+            raise MoveItError('holding %s: place, drop or reset first -- '
+                              'opening for the hand-over would drop it'
+                              % ', '.join(repr(n) for n in attached))
+        obj = self._object(name)
+        self.mc.open_gripper()
+        self.get_logger().info('jaws open: put %s between the fingers; '
+                               'closing in %.0f s' % (obj.name, delay))
+        time.sleep(delay)
+        self.mc.set_gripper(obj.grip_angle())
+
+        # attach(pose=...) re-places an object already in the scene, so it has
+        # to be added first. Where does not matter: attach moves it into the
+        # jaws before anything plans against it.
+        joints = self.mc.current_joints()
+        tcp = kin.fk(joints)
+        scene_objects.add(self.mc, obj, tcp[0], tcp[1], tcp[2])
+        phi, roll, hover = tcp[3], joints[4], self._hover(obj)
+        scene_objects.attach(self.mc, obj, phi, roll, hover)
+        self.markers.hold(obj, phi, roll, hover)
+        self.held = obj
+        self.get_logger().info('gripped %s' % obj.name)
+        return obj
+
     # ------------------------------------------------------------------ reset
 
     def reset(self, state=RESET_STATE, force=False):
@@ -1202,17 +1248,33 @@ def main(args=None):
                       help='open the jaws where the arm is, dropping whatever '
                            'is held, and remove it from the planning scene. '
                            'Moves nothing; takes no coordinates')
+    half.add_argument('--grip', action='store_true',
+                      help='open the jaws, wait --grip-delay seconds for the '
+                           'object to be put between the fingers, then close '
+                           'to its grip and hold it as if picked. Moves '
+                           'nothing; takes no coordinates')
+    parser.add_argument('--grip-delay', type=float, default=GRIP_DELAY,
+                        help='seconds --grip waits with the jaws open '
+                             '(default %(default)s)')
     cli = parser.parse_args(remove_ros_args(sys.argv)[1:])
 
     # All settled before rclpy.init, so a bad command line costs nothing and
     # says what the choices are rather than starting a node to find out.
     modes = (cli.check_states, cli.reset, cli.plan_only, cli.check, cli.pick,
-             cli.place, cli.drop)
+             cli.place, cli.drop, cli.grip)
     if not any(modes):
         parser.print_usage(sys.stderr)
-        print('give a mode: --pick x y z, --place, --drop, '
+        print('give a mode: --pick x y z, --place, --drop, --grip, '
               '--plan-only x y z, --check x y z, --reset or --check-states',
               file=sys.stderr)
+        return 2
+    if cli.grip and (cli.x is not None or cli.y is not None
+                     or cli.z is not None):
+        print('--grip takes no coordinates: the object is handed to the jaws '
+              'where the arm already is', file=sys.stderr)
+        return 2
+    if cli.grip_delay < 0.0:
+        print('--grip-delay cannot be negative', file=sys.stderr)
         return 2
     if (cli.place or cli.drop) and (cli.x is not None or cli.y is not None
                                     or cli.z is not None):
@@ -1220,11 +1282,13 @@ def main(args=None):
               'already holding, wherever that came from'
               % ('place' if cli.place else 'drop'), file=sys.stderr)
         return 2
-    if (cli.plan_only or cli.check) and (cli.place or cli.drop or cli.pick):
+    if (cli.plan_only or cli.check) and (cli.place or cli.drop or cli.pick
+                                         or cli.grip):
         print('--%s is a dry run of the pick, and has nothing to say '
               'about --%s' % ('check' if cli.check else 'plan-only',
                               'place' if cli.place else
-                              'drop' if cli.drop else 'pick'),
+                              'drop' if cli.drop else
+                              'grip' if cli.grip else 'pick'),
               file=sys.stderr)
         return 2
 
@@ -1253,6 +1317,8 @@ def main(args=None):
             node.place()
         elif cli.drop:
             node.drop()
+        elif cli.grip:
+            node.grip(cli.object, cli.grip_delay)
         elif cli.x is None or cli.y is None or cli.z is None:
             parser.print_usage(sys.stderr)
             node.get_logger().error('give an object position: x y z (metres, '
