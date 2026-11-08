@@ -11,13 +11,12 @@ Look through the arm camera and see what the detector makes of it.
     ros2 run dofbot_ctrl calibrate_view -- --shot /tmp/view.png --labels \
         'a soda can' 'a coke can' 'a drink can' 'a red object'
 
-IF YOU CAN SEE FLOOR IN THE SHOT, THE HELD VERDICT IN IT IS MEANINGLESS. That
-check is a whole-frame classification and cannot tell a can in the jaws from
-one lying behind it -- measured, one in view reads as held at 1.000. 'carry'
-points the tool well up and shows no floor, which is what makes the question
-answerable there; this tool is usually run from wherever the arm happens to be,
-which is usually not that. Read the held line as a comment on the frame in
-front of you, not as a verdict about the gripper.
+THE HELD VERDICT MEANS SOMETHING ONLY FROM STOW. It classifies the bottom-centre
+crop of the frame (vision.HELD_CROP) and asks whether a can there is a close-up
+filling it or a small one on the floor -- which is what a held can and a far
+one look like from stow, and from nowhere else in particular. To collect frames
+for it, save them without overlays (--shot, no --detect) into ~/held_frames/
+as stow_held_*.png or stow_empty_*.png, then run rescore_held.
 
 APPROACH_MAX_OFFSET, the one remaining gate, is how far off the image centre
 the can being approached may sit. It is unset, and wants a real standoff frame
@@ -155,27 +154,15 @@ def main(argv=None):
         return 0
 
     if cli.detect:
-        # The held check first, because it is the one whose answer depends on
-        # what is BEHIND the gripper -- and a picture is the only way to see
-        # that. It is a classification, so it shares nothing with the detection
-        # path below and needs its own inference.
-        alternatives = vision.held_alternatives(label)
-        index, score, secs, why = vision.classify(frame, alternatives,
-                                                  url=cli.url)
-        if index is None:
-            print('\nheld     could not ask: %s' % why)
-        else:
-            winner = alternatives[index]
-            verdict = ('PRESENT' if index == len(alternatives) - 1
-                       else 'ABSENT')
-            if score < vision.CLASSIFY_MIN_SCORE:
-                verdict = 'UNKNOWN (under the %.2f floor)' % \
-                    vision.CLASSIFY_MIN_SCORE
-            print('\nheld     %s -- %r at %.3f  (%.2fs)'
-                  % (verdict, winner, score, secs))
-            print('         reads the WHOLE frame: only meaningful from a '
-                  'pose showing no floor, i.e. carry. If this shot has floor '
-                  'in it, a can lying there reads as held.')
+        # The held check first: the same call pick_place makes at stow, so
+        # this line is what a pick would decide on this frame. It classifies
+        # the bottom-centre crop (vision.HELD_CROP), not the whole frame, and
+        # is only meaningful from stow.
+        sighting = vision.look('held', label, frame, cli.url)
+        print('\nheld     %s  (%.2fs)' % (vision.describe(sighting),
+                                         sighting.inference_time))
+        print('         classifies the bottom-centre crop %s; meaningful '
+              'only from stow' % (sighting.box,))
 
         # Then the detection path, which is what the approach check uses.
         detections, seconds, reason = vision.detect(frame, label, url=cli.url)

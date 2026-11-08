@@ -177,35 +177,52 @@ def stub_classifier(monkeypatch, index, score, seconds=0.05, reason=''):
                         lambda *a, **k: (index, score, seconds, reason))
 
 
-def test_the_holding_alternative_is_the_last_one():
+def test_the_held_alternatives_put_the_close_up_first():
     """_look_held reads the winner by position, so the order is load-bearing."""
-    alts = vision.held_alternatives(LABEL)
-    assert len(alts) == 2
-    assert LABEL in alts[-1]
+    assert vision.HELD_INDEX == 0
+    assert 'close-up' in vision.HELD_ALTERNATIVES[vision.HELD_INDEX]
+    assert len(vision.HELD_ALTERNATIVES) == 3
 
 
-def test_the_holding_alternative_means_held(monkeypatch):
-    alts = vision.held_alternatives(LABEL)
-    stub_classifier(monkeypatch, len(alts) - 1, 0.99)
+def test_the_close_up_means_held(monkeypatch):
+    stub_classifier(monkeypatch, vision.HELD_INDEX, 0.99)
     sighting = vision.look('held', LABEL, frame=lit())
     assert sighting.verdict == vision.PRESENT
 
 
-def test_the_empty_alternative_means_not_held(monkeypatch):
-    stub_classifier(monkeypatch, 0, 0.93)
+@pytest.mark.parametrize('index', [1, 2])
+def test_a_small_can_or_a_floor_means_not_held(monkeypatch, index):
+    """A can on the floor is small from stow; that is not the one in the jaws."""
+    stub_classifier(monkeypatch, index, 0.93)
     sighting = vision.look('held', LABEL, frame=lit())
     assert sighting.verdict == vision.ABSENT
 
 
+def test_the_held_check_classifies_the_bottom_centre_crop(monkeypatch):
+    asked = []
+    monkeypatch.setattr(vision, 'classify',
+                        lambda frame, alts, **k: (asked.append(
+                            (frame.shape, alts)), (0, 0.99, 0.05, ''))[1])
+    frame = lit()
+    height, width = frame.shape[:2]
+    sighting = vision.look('held', LABEL, frame=frame)
+    (shape, alts), = asked
+    x0, y0, x1, y1 = vision.HELD_CROP
+    assert alts == vision.HELD_ALTERNATIVES
+    assert shape[:2] == (round(y1 * height) - round(y0 * height),
+                         round(x1 * width) - round(x0 * width))
+    assert sighting.box == (round(x0 * width), round(y0 * height),
+                            round(x1 * width), round(y1 * height))
+
+
 def test_a_near_coin_flip_is_unknown_not_a_verdict(monkeypatch):
-    """A two-way classification ALWAYS returns a winner, so a bare winner is
-    not an answer. The measured wording this rejects got its negative at
-    0.527, against a 0.5 chance line."""
-    alts = vision.held_alternatives(LABEL)
-    stub_classifier(monkeypatch, len(alts) - 1,
-                    vision.CLASSIFY_MIN_SCORE - 0.01)
-    assert vision.look('held', LABEL, frame=lit()).verdict == vision.UNKNOWN
-    stub_classifier(monkeypatch, len(alts) - 1, vision.CLASSIFY_MIN_SCORE)
+    """A classification ALWAYS returns a winner, so a bare winner is not an
+    answer -- in either direction."""
+    for index in (vision.HELD_INDEX, 1):
+        stub_classifier(monkeypatch, index, vision.CLASSIFY_MIN_SCORE - 0.01)
+        assert (vision.look('held', LABEL, frame=lit()).verdict
+                == vision.UNKNOWN)
+    stub_classifier(monkeypatch, vision.HELD_INDEX, vision.CLASSIFY_MIN_SCORE)
     assert vision.look('held', LABEL, frame=lit()).verdict == vision.PRESENT
 
 
@@ -362,7 +379,7 @@ def test_warm_up_sets_the_held_classification_and_puts_the_prompt_back(
     ok, _seconds, why = vision.warm_up(LABEL)
     assert ok and why == ''
     assert owl.prompts_set == ['(%s)' % ', '.join(
-        vision.held_alternatives(LABEL)), '[a bin]']
+        vision.HELD_ALTERNATIVES), '[a bin]']
 
 
 def test_warm_up_with_no_detector_says_so(monkeypatch):

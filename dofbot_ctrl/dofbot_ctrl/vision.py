@@ -24,13 +24,13 @@ GPU service happens to be running something else. Callers act on ABSENT and log
 UNKNOWN. Vision is a confirmation added to the pick, never a new dependency
 of it.
 
-BOTH CHECKS ARE ONE CLASSIFICATION
-----------------------------------
-Both ask the same question -- is there a can where the jaws are? -- as a
-whole-frame classification between held_alternatives, from a pose where the
-jaws are around the can: the grasp pose for approach, stow for held. The jaws
-themselves are out of frame (see below), so jaws open around a can and jaws
-closed on one are the same picture, and one measured wording serves both.
+BOTH CHECKS ARE CLASSIFICATIONS
+-------------------------------
+Approach is a whole-frame classification between held_alternatives at the
+grasp pose. Held is a classification of the BOTTOM-CENTRE CROP at stow,
+asking how big the can there is, not whether there is one -- see HELD_CROP.
+The jaws themselves are out of frame in both, so jaws open around a can and
+jaws closed on one are the same picture.
 
 The detection machinery further down -- candidates, choose, judge and the
 APPROACH_MAX_OFFSET gate -- is what approach used when it was asked from the
@@ -270,25 +270,19 @@ MIN_FRAME_MEAN = 8.0
 # Too low invents objects; too high aborts good picks.
 MIN_SCORE = 0.1
 
-# --------------------------------------------------- the held classification
+# ---------------------------------- the whole-frame classification (approach)
 #
-# The held check is a CLASSIFICATION, not a detection. The held can reaches the
-# frame only as a truncated sliver at the bottom edge -- the grip point sits
-# about five degrees outside the field of view -- and detection returns nothing
-# for it at any wording. Classification does not need a detectable object.
+# held_alternatives is the wording the approach check classifies the WHOLE
+# frame with. It was measured for the held check at the old 'carry' pose, which
+# pointed the tool up and showed no floor; the held check has since moved to a
+# crop at stow (HELD_CROP below), because whole-frame classification cannot
+# tell a can in the jaws from one lying in the background -- measured, one in
+# view reads as held at 1.000.
 #
-# IT REQUIRES A CHECK POSE WITH NO FLOOR IN FRAME, and 'carry' is one: it
-# points the tool well up, so the only can that can appear is the one being
-# held. Classification answers about the whole picture and cannot tell a can in
-# the jaws from one lying in the background -- measured, one in view reads as
-# held at 1.000 -- so the pose is what makes the question answerable, and
-# asking it from anywhere that sees floor gets a confident wrong answer.
-#
-# The empty alternative names NO SCENE. The background at carry is whatever the
-# arm happens to face, so a negative such as 'a wall', 'a floor' or 'furniture'
-# is right only where that is what is behind it -- and scores best exactly on
-# the frames it happens to describe. The alternatives differ only in the can;
-# see the docstring's three wording rules.
+# The empty alternative names NO SCENE. At carry the background was whatever
+# the arm happened to face, so a negative such as 'a wall' or 'furniture' was
+# right only where that was what was behind it. The alternatives differ only in
+# the can; see the docstring's three wording rules.
 #
 # Measured 2026-10-17 on three frames -- can in the jaws at carry, the same
 # view emptied, and an empty view of carpet and table legs: 0.871 holding,
@@ -297,6 +291,53 @@ MIN_SCORE = 0.1
 # two frames ('a photo', 'nothing') called the carpet frame held at 0.86-0.89.
 # Wordings that name part of the can ('the upper portion of', 'the top of')
 # lose to the whole-can wording on the held frame.
+# ------------------------------------------- the held check: a cropped look
+#
+# THE HELD CHECK CLASSIFIES A CROP, NOT THE FRAME, AND ASKS ABOUT SIZE. At
+# stow the wrist camera looks level and the floor is always in frame, so a
+# whole-frame "is there a can?" says yes to any can lying in the room --
+# measured 2026-11-08, it called every empty frame with a can in view held at
+# 0.80-0.98. What separates a held can is where it is and how big: held, it
+# fills the bottom-centre of the picture; on the floor, it is small, because
+# the only cans in view when the jaws are empty are further away.
+#
+# So: crop to HELD_CROP and choose between HELD_ALTERNATIVES. Only the first
+# answer means held. Scored with rescore_held on ~/held_frames/ (named
+# stow_held_* / stow_empty_*): 9/9, held cans at 0.79-1.00 and no empty frame
+# choosing the close-up at all.
+#
+# The crop is (x0, y0, x1, y1) as fractions of the frame: the bottom half, the
+# middle 70%. Wider fails: the full-width bottom half and the whole frame both
+# read a held can as "a small can on the floor" on some frames, because the
+# edges are where the background is.
+HELD_CROP = (0.15, 0.5, 0.85, 1.0)
+
+# Fixed wording, deliberately not built from the catalogue label: "a
+# close-up of a soda can ..." dropped a low, tilted held can from 0.79 to 0.53.
+# The check is for cans; anything else wants its own measured wording. "a
+# floor" is safe to name here, as it was not at the old carry pose, because the
+# bottom of the stow view is always floor.
+HELD_ALTERNATIVES = ('a close-up of a can filling the picture',
+                     'a small can on the floor',
+                     'a floor')
+HELD_INDEX = 0
+
+
+def held_crop(frame, crop=None):
+    """The part of `frame` the held check classifies, and its pixel box.
+
+    `crop` defaults to HELD_CROP as it is when CALLED, so rescore_held can try
+    another region by setting the module constant.
+    """
+    if crop is None:
+        crop = HELD_CROP
+    width, height = frame_size(frame)
+    x0, y0 = int(round(crop[0] * width)), int(round(crop[1] * height))
+    x1, y1 = int(round(crop[2] * width)), int(round(crop[3] * height))
+    # A copy: a slice is a view, and the JPEG encoder wants contiguous memory.
+    return frame[y0:y1, x0:x1].copy(), (x0, y0, x1, y1)
+
+
 def held_alternatives(label):
     """The two worlds both checks choose between, for this object.
 
@@ -622,17 +663,18 @@ def ask(frame, prompt, url=OWL_URL, timeout=OWL_TIMEOUT):
 def warm_up(label, url=OWL_URL, timeout=OWL_WARMUP_TIMEOUT):
     """Pay nanoOWL's first-classification cost now, not during a pick.
 
-    Sets the held classification prompt for `label` with a socket timeout
-    long enough to outlast loading CLIP (see OWL_WARMUP_TIMEOUT), then puts
-    the previous prompt back. Needs no camera: the cost is in encoding the
-    prompt, not in any frame.
+    Sets the held check's classification prompt (HELD_ALTERNATIVES) with a
+    socket timeout long enough to outlast loading CLIP (see
+    OWL_WARMUP_TIMEOUT), then puts the previous prompt back. Needs no camera:
+    the cost is in encoding the prompt, not in any frame. `label` is unused --
+    the held wording is fixed -- and kept so callers need not change.
 
     Returns (ok, seconds, reason).
     """
     proxy = connect(url, timeout)
     if proxy is None:
         return False, 0.0, 'nanoOWL is not answering at %s' % url
-    prompt = '(%s)' % ', '.join(held_alternatives(label))
+    prompt = '(%s)' % ', '.join(HELD_ALTERNATIVES)
     started = time.time()
     try:
         previous = proxy.get_prompt() or ''
@@ -806,11 +848,39 @@ def look(check, label, frame=None, url=OWL_URL):
                                'the lens' % (frame.mean(), MIN_FRAME_MEAN),
                         label)
 
+    if check == 'held':
+        return _look_held(label, frame, url)
     return _look_classified(check, label, frame, url)
 
 
+def _look_held(label, frame, url):
+    """The held check: classify the bottom-centre crop. See HELD_CROP.
+
+    PRESENT only for a confident close-up; a confident small can or floor is
+    ABSENT; anything under CLASSIFY_MIN_SCORE is UNKNOWN, so a coin flip can
+    neither abort a pick nor vouch for one. `box` is the crop, in frame pixels.
+    """
+    crop, box = held_crop(frame)
+    index, score, seconds, reason = classify(crop, HELD_ALTERNATIVES, url=url)
+    if index is None:
+        return _unknown('held', reason, label)
+    if not 0 <= index < len(HELD_ALTERNATIVES):
+        return _unknown('held', 'nanoOWL answered with alternative %d, which '
+                                'was not asked' % index, label)
+    winner = HELD_ALTERNATIVES[index]
+    if score < CLASSIFY_MIN_SCORE:
+        return _unknown('held', '%r at %.2f, under the %.2f that separates an '
+                                'answer from a coin flip'
+                                % (winner, score, CLASSIFY_MIN_SCORE), label)
+    holding = index == HELD_INDEX
+    return Sighting(PRESENT if holding else ABSENT, 'held', label, score, box,
+                    0.0, 0.0, 1 if holding else 0,
+                    '%r at %.2f (bottom-centre crop)' % (winner, score),
+                    seconds)
+
+
 def _look_classified(check, label, frame, url):
-    """Either check: a classification, not a detection. See CHECKS.
+    """The approach check: a whole-frame classification. See CHECKS.
 
     Classification answers about the whole picture, so a can in the background
     is a can as far as it is concerned -- measured, one lying in view reads as

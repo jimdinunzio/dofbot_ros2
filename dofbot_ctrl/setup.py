@@ -42,6 +42,7 @@ setup(
             'wave_arm = dofbot_ctrl.wave_arm:main',
             'measure_bus = dofbot_ctrl.tuning.measure_bus:main',
             'measure_tracking = dofbot_ctrl.tuning.measure_tracking:main',
+            'rescore_held = dofbot_ctrl.tuning.rescore_held:main',
         ],
     },
 )
