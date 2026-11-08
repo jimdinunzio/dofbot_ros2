@@ -46,12 +46,12 @@ SEQUENCE
     move_pose  to a pre-grasp standoff back along the tool axis  (OMPL plans it)
                -- as long a standoff as the arm has room for, measured
     cartesian_move straight in to the grasp                      (we plan it)
-    LOOK: is the object between the open jaws?       (vision.py; --no-vision)
+    LOOK: is the object between the open jaws?  (OFF unless --approach-check)
     close_gripper to the object's grasp width
     attach, with every end-effector link named as a touch link
     move_named('ready')       -- THIS is what clears the floor
     move_named('stow')        -- turned to the side, to be carried
-    LOOK: did it come with us?                       (vision.py; --no-vision)
+    LOOK: did it come with us?                  (vision.py; --no-held-check)
 
 The two LOOKs ask the wrist camera through nanoOWL and abort the pick when the
 answer is a definite no. Both are the same question -- is there a can where
@@ -339,6 +339,12 @@ class PickPlace(Node):
         # Turn it off to pick against a scene the camera cannot see, such as a
         # bench test with the arm off the robot.
         self.declare_parameter('vision', True)
+        # Each check on its own, under `vision`. The approach check is OFF by
+        # default: the held check at stow is the one a caller acts on, and the
+        # approach look costs a nanoOWL round trip with the jaws open around
+        # the can. --approach-check turns it on, --no-held-check the other off.
+        self.declare_parameter('approach_check', False)
+        self.declare_parameter('held_check', True)
         # Directory to save the wrist camera's frame to at the approach check,
         # one PNG per pick named by date and time. Empty is off;
         # --approach-capture turns it on at APPROACH_CAPTURE_DIR.
@@ -676,7 +682,9 @@ class PickPlace(Node):
                    if check == 'approach' else '')
         # Grabbed here, not by vision, so the frame judged is the frame saved.
         frame = vision.grab() if capture else None
-        if not self.get_parameter('vision').value:
+        wanted = (self.get_parameter('approach_check' if check == 'approach'
+                                     else 'held_check').value)
+        if not (self.get_parameter('vision').value and wanted):
             if capture:
                 self._save_capture(capture, frame, None)
             return None
@@ -1136,10 +1144,17 @@ def main(args=None):
                              'gripper and move to STATE (default %s)'
                              % RESET_STATE)
     parser.add_argument('--no-vision', action='store_true',
-                        help='do not confirm the pick with the wrist camera. '
-                             'The checks already pass themselves when they '
-                             'cannot be asked, so this is for picking against '
-                             'a scene the camera deliberately cannot see')
+                        help='do not confirm the pick with the wrist camera at '
+                             'all: both checks off. The checks already pass '
+                             'themselves when they cannot be asked, so this is '
+                             'for picking against a scene the camera '
+                             'deliberately cannot see')
+    parser.add_argument('--approach-check', action='store_true',
+                        help='look for the object between the open jaws '
+                             'before closing them (off by default)')
+    parser.add_argument('--no-held-check', action='store_true',
+                        help='skip the look at stow that the object came '
+                             'with the arm (on by default)')
     # A plain flag, not one taking an optional DIR: x y z are optional
     # positionals, so '--approach-capture 0.30 0.0 0.061' would read the x as
     # the directory. The approach_capture parameter picks another directory.
@@ -1197,6 +1212,12 @@ def main(args=None):
     node = PickPlace()
     if cli.no_vision:
         node.set_parameters([Parameter('vision', Parameter.Type.BOOL, False)])
+    if cli.approach_check:
+        node.set_parameters([Parameter('approach_check', Parameter.Type.BOOL,
+                                       True)])
+    if cli.no_held_check:
+        node.set_parameters([Parameter('held_check', Parameter.Type.BOOL,
+                                       False)])
     if (cli.approach_capture
             and not node.get_parameter('approach_capture').value):
         node.set_parameters([Parameter('approach_capture',
