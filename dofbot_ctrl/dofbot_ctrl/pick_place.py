@@ -246,27 +246,43 @@ class NotThereError(vision.VisionError):
 APPROACH_CAPTURE_DIR = os.path.expanduser('~/dofbot_captures')
 
 
-# How much LOWER to aim the grip, by the object's distance from the arm axis:
-# (distance m, aim drop m), ascending. The real grip lands above the aim by an
-# amount that varies with distance -- not monotonically -- and the can's taper
-# starts at 105 mm. Measured with z = 0.061:
-#   0.25 m  aim 92 landed above 105 and fell out; aim 82 landed just under the
-#           taper and held
-#   0.30 m  aim 92 lands ~100, just under the taper, holds
-#   0.34 m  aim 92 landed at the taper edge: held once, dropped once. 87 is
-#           for the same margin as the others, not yet confirmed
+# How much HIGHER to aim the grip than the catalogue height, by the object's
+# distance from the arm axis: (distance m, raise m), ascending. Execution is
+# open loop, and under its own weight at full reach the elbow and wrist servos
+# settle short of their command (arm3 about +2 deg, arm4 about +1 deg), so the
+# point between the jaws lands LOW. Measured 2026-11-08 on the hard floor by
+# stopping pick()'s approach at the grasp, jaws open, no can, and running the
+# encoder read-back through fk at the grasp point:
+#   0.25 m   6.7 mm low, 4.1 mm short
+#   0.28 m  16.2 mm low, 8.3 mm short
+#   0.30 m  15.2 mm low, 8.0 mm short   (14.4 / 7.9 on an earlier run)
+#   0.32 m  11.8 mm low, 4.3 mm short
+#   0.34 m  12.6 mm low, 3.4 mm short
+# Not monotonic -- servo deadband, not a clean beam -- so a table, not a model.
+# Uncorrected, an aim of 92 mm landed ~78 mm up a can at 0.30 m ("a little
+# above midway") and the can slid out at stow.
+#
+# The SHORTFALL IS NOT CORRECTED here: soda_can's seat_depth already drives the
+# fingertips 10 mm deeper, which was tuned on hardware against this same sag.
+#
+# This replaces GRIP_AIM_DROP, which aimed LOWER: it was measured on carpet
+# with z = 0.061 when the true centre there was 0.039, so it was undoing a
+# 22 mm-high aim rather than describing the arm.
+#
 # Interpolated between rows, held flat past either end -- nothing outside
 # 0.25..0.34 has been measured, so extend the table rather than trust the ends.
-GRIP_AIM_DROP = (
-    (0.25, 0.010),
-    (0.30, 0.000),
-    (0.34, 0.005),
+GRIP_SAG_RAISE = (
+    (0.25, 0.007),
+    (0.28, 0.016),
+    (0.30, 0.015),
+    (0.32, 0.012),
+    (0.34, 0.013),
 )
 
 
-def _aim_drop(distance):
-    """GRIP_AIM_DROP at `distance`, interpolated, flat past the ends."""
-    rows = GRIP_AIM_DROP
+def _sag_raise(distance):
+    """GRIP_SAG_RAISE at `distance`, interpolated, flat past the ends."""
+    rows = GRIP_SAG_RAISE
     if distance <= rows[0][0]:
         return rows[0][1]
     for (d0, a0), (d1, a1) in zip(rows, rows[1:]):
@@ -747,21 +763,22 @@ class PickPlace(Node):
         because it must not move the arm.
         """
         obj = self._object(name)
-        # Shift the preferred height AND its band down together: the band only
+        # Shift the preferred height AND its band up together: the band only
         # ever trades downward from the nominal, so the solver still never aims
-        # above the corrected nominal unless told to.
-        drop = _aim_drop(hypot(x, y))
-        if drop > 0.0:
+        # above the corrected nominal unless told to. The model's jaws then sit
+        # above where the real ones land, which is the point.
+        rise = _sag_raise(hypot(x, y))
+        if rise > 0.0:
             band = obj.grasp_height_range
-            # Rounded to the micrometre: 0.070 - 0.010 is not 0.060 in floats,
+            # Rounded to the micrometre: 0.070 + 0.010 is not 0.080 in floats,
             # and the sweep's own steps then fall outside the band by 1e-17.
-            obj = replace(obj, grasp_height=round(obj.grasp_height - drop, 6),
+            obj = replace(obj, grasp_height=round(obj.grasp_height + rise, 6),
                           grasp_height_range=None if band is None
-                          else tuple(round(h - drop, 6) for h in band))
+                          else tuple(round(h + rise, 6) for h in band))
             self.get_logger().info(
-                'aiming the grip %.0f mm lower at %.3f m out, where the real '
-                'grip lands higher (GRIP_AIM_DROP)'
-                % (drop * 1e3, hypot(x, y)))
+                'aiming the grip %.0f mm higher at %.3f m out, where the real '
+                'arm sags (GRIP_SAG_RAISE)'
+                % (rise * 1e3, hypot(x, y)))
         if not plan_only:
             left = self._leftovers()
             if left:
