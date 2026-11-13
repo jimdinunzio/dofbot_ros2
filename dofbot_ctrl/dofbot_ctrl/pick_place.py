@@ -252,13 +252,13 @@ class NotThereError(vision.VisionError):
 APPROACH_CAPTURE_DIR = os.path.expanduser('~/dofbot_captures')
 
 
-# How much HIGHER to aim the grip than the catalogue height, by the object's
-# distance from the arm axis: (distance m, raise m), ascending. Execution is
-# open loop, and under its own weight at full reach the elbow and wrist servos
-# settle short of their command (arm3 about +2 deg, arm4 about +1 deg), so the
-# point between the jaws lands LOW. Measured 2026-11-08 on the hard floor by
-# stopping pick()'s approach at the grasp, jaws open, no can, and running the
-# encoder read-back through fk at the grasp point:
+# How much HIGHER and how much FURTHER OUT to aim the grip, by the object's
+# distance from the arm axis: (distance m, raise m, reach m), ascending.
+# Execution is open loop, and under its own weight at full reach the elbow and
+# wrist servos settle short of their command (arm3 about +2 deg, arm4 about
+# +1 deg), so the point between the jaws lands LOW and SHORT. Measured
+# 2026-11-08 on the hard floor by stopping pick()'s approach at the grasp, jaws
+# open, no can, and running the encoder read-back through fk at the grasp point:
 #   0.25 m   6.7 mm low, 4.1 mm short
 #   0.28 m  16.2 mm low, 8.3 mm short
 #   0.30 m  15.2 mm low, 8.0 mm short   (14.4 / 7.9 on an earlier run)
@@ -268,8 +268,12 @@ APPROACH_CAPTURE_DIR = os.path.expanduser('~/dofbot_captures')
 # Uncorrected, an aim of 92 mm landed ~78 mm up a can at 0.30 m ("a little
 # above midway") and the can slid out at stow.
 #
-# The SHORTFALL IS NOT CORRECTED here: soda_can's seat_depth already drives the
-# fingertips 10 mm deeper, which was tuned on hardware against this same sag.
+# THE SHORTFALL IS CORRECTED TOO. It was first left alone on the theory that
+# soda_can's seat_depth already absorbed it, but seat_depth is where on the
+# finger the can should land, not a sag allowance: with only the height fixed,
+# the jaws still closed 4-8 mm shy of that contact line, the can was never
+# seated against the back stop, and it fell out. The reach column pushes the
+# aim out along the bearing so the real jaws arrive where seat_depth says.
 #
 # This replaces GRIP_AIM_DROP, which aimed LOWER: it was measured on carpet
 # with z = 0.061 when the true centre there was 0.039, so it was undoing a
@@ -277,24 +281,26 @@ APPROACH_CAPTURE_DIR = os.path.expanduser('~/dofbot_captures')
 #
 # Interpolated between rows, held flat past either end -- nothing outside
 # 0.25..0.34 has been measured, so extend the table rather than trust the ends.
-GRIP_SAG_RAISE = (
-    (0.25, 0.007),
-    (0.28, 0.016),
-    (0.30, 0.015),
-    (0.32, 0.012),
-    (0.34, 0.013),
+GRIP_SAG = (
+    (0.25, 0.007, 0.004),
+    (0.28, 0.016, 0.008),
+    (0.30, 0.015, 0.008),
+    (0.32, 0.012, 0.004),
+    (0.34, 0.013, 0.003),
 )
 
 
-def _sag_raise(distance):
-    """GRIP_SAG_RAISE at `distance`, interpolated, flat past the ends."""
-    rows = GRIP_SAG_RAISE
+def _sag(distance):
+    """GRIP_SAG at `distance` as (raise, reach), interpolated, flat past the
+    ends."""
+    rows = GRIP_SAG
     if distance <= rows[0][0]:
-        return rows[0][1]
-    for (d0, a0), (d1, a1) in zip(rows, rows[1:]):
+        return rows[0][1:]
+    for (d0, a0, b0), (d1, a1, b1) in zip(rows, rows[1:]):
         if distance <= d1:
-            return a0 + (a1 - a0) * (distance - d0) / (d1 - d0)
-    return rows[-1][1]
+            t = (distance - d0) / (d1 - d0)
+            return a0 + (a1 - a0) * t, b0 + (b1 - b0) * t
+    return rows[-1][1:]
 
 
 def _joint_margin(joints):
@@ -773,7 +779,8 @@ class PickPlace(Node):
         # ever trades downward from the nominal, so the solver still never aims
         # above the corrected nominal unless told to. The model's jaws then sit
         # above where the real ones land, which is the point.
-        rise = _sag_raise(hypot(x, y))
+        distance = hypot(x, y)
+        rise, reach = _sag(distance)
         if rise > 0.0:
             band = obj.grasp_height_range
             # Rounded to the micrometre: 0.070 + 0.010 is not 0.080 in floats,
@@ -781,10 +788,19 @@ class PickPlace(Node):
             obj = replace(obj, grasp_height=round(obj.grasp_height + rise, 6),
                           grasp_height_range=None if band is None
                           else tuple(round(h + rise, 6) for h in band))
+        # The approach is planned to a point pushed out along the bearing by
+        # the shortfall, while the scene keeps the object where it really is:
+        # the model's jaws then sit deeper than the real ones land, the same
+        # trade as the raise.
+        aim_x, aim_y = x, y
+        if reach > 0.0 and distance > 0.0:
+            aim_x += reach * x / distance
+            aim_y += reach * y / distance
+        if rise > 0.0 or reach > 0.0:
             self.get_logger().info(
-                'aiming the grip %.0f mm higher at %.3f m out, where the real '
-                'arm sags (GRIP_SAG_RAISE)'
-                % (rise * 1e3, hypot(x, y)))
+                'aiming the grip %.0f mm higher and %.0f mm further out at '
+                '%.3f m, where the real arm sags (GRIP_SAG)'
+                % (rise * 1e3, reach * 1e3, distance))
         if not plan_only:
             left = self._leftovers()
             if left:
@@ -794,7 +810,7 @@ class PickPlace(Node):
                 self.reset()
         self._clear(obj)
         phi, pre, grasp, hover, height = self._feasible_approach(
-            obj, x, y, z)
+            obj, aim_x, aim_y, z)
 
         # The sweep is allowed to move the grip height within the object's own
         # band, and EVERYTHING DOWNSTREAM MEASURES FROM IT: the collision

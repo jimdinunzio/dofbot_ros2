@@ -279,8 +279,10 @@ SODA_CAN = register(GraspableObject(
     # The can's widest point 10 mm in from the fingertip, set on hardware: the
     # derived seating clamps to the very tip for a can this wide, and the jaws
     # were not reaching far enough over it. By the finger model that puts the
-    # back of the can 43 mm into a 40 mm finger, so if the cross bars push the
-    # can, this is the number to bring back down.
+    # back of the can 43 mm into a 40 mm finger -- seated against the back stop,
+    # which is the intent. It is a target, not a sag allowance: the arm's
+    # shortfall at reach is corrected separately by pick_place.GRIP_SAG, so if
+    # the cross bars push the can over, bring this back down.
     seat_depth=0.010,
 
     mesh='package://dofbot_description/meshes/cokecan.obj'))
