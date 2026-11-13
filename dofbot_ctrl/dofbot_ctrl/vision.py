@@ -338,6 +338,26 @@ def held_crop(frame, crop=None):
     return frame[y0:y1, x0:x1].copy(), (x0, y0, x1, y1)
 
 
+# --------------------------------------------- the colour of the held can
+#
+# A CLASSIFICATION OF THE HELD CROP, NOT A DETECTION, though the tree syntax
+# offers one: '[a can (red, green, blue)]' detects a can and then classifies
+# each box. It cannot classify a can it did not detect, and the held can is
+# the one detection misses. Measured 2026-11-10 on ~/held_frames/: that prompt
+# found no can at all in the held red frame, whole or cropped, and found the
+# held blue one only in the whole frame. Classifying HELD_CROP between
+# COLOR_ALTERNATIVES got both: blue 0.97, red 0.95.
+#
+# A classification always names a winner, so this says "red" of an empty crop
+# too (0.72 on a frame of chair legs). held_color() therefore asks the held
+# check first, on the same frame, and asks the colour only of a can it saw.
+# The cans the arm is given are red, green or blue, so COLORS is the whole
+# space. A can of none of the three (silver Diet Coke) scored 0.43-0.78 and
+# may be named its nearest colour; that case is not expected to arise.
+COLORS = ('red', 'green', 'blue')
+COLOR_ALTERNATIVES = tuple('a %s can' % c for c in COLORS)
+
+
 def held_alternatives(label):
     """The two worlds both checks choose between, for this object.
 
@@ -927,6 +947,56 @@ def approach(obj, frame=None, url=OWL_URL):
 def held(obj, frame=None, url=OWL_URL):
     """Is `obj` still in the jaws? Asked at stow."""
     return look('held', label_for(obj), frame, url)
+
+
+def held_color(label, frame=None, url=OWL_URL):
+    """Which of COLORS the can in the jaws is. Asked at stow, like held().
+
+    Returns (color, sighting). `color` is one of COLORS, or None whenever the
+    sighting's verdict is not PRESENT:
+
+        PRESENT   a can is held and its colour cleared CLASSIFY_MIN_SCORE
+        ABSENT    the held check had a good look and the jaws are empty
+        UNKNOWN   either question could not be answered
+
+    Both questions are put to ONE frame, so the can whose colour is named is
+    the can the held check saw. The sighting's check is 'color'; its label is
+    the winning alternative and its score that alternative's. Its `seen` is
+    1 whenever the held check saw a can, so a held can of uncertain colour
+    (UNKNOWN, seen 1) stays apart from a held check that could not answer
+    (UNKNOWN, seen 0).
+    """
+    if frame is None:
+        frame = grab()
+    if frame is None:
+        return None, _unknown('color', 'the arm camera at index %d would not '
+                                       'open or would not read'
+                              % CAMERA_INDEX, label)
+    held_look = look('held', label, frame, url)
+    if held_look.verdict != PRESENT:
+        return None, held_look._replace(
+            check='color', reason='no colour without a held can: '
+                                  + held_look.reason)
+
+    crop, box = held_crop(frame)
+    index, score, seconds, reason = classify(crop, COLOR_ALTERNATIVES, url=url)
+    seconds += held_look.inference_time
+    # Past here a can IS held, so the unknowns keep seen=1 to say so.
+    if index is None:
+        return None, _unknown('color', reason, label)._replace(seen=1)
+    if not 0 <= index < len(COLORS):
+        return None, _unknown('color', 'nanoOWL answered with alternative %d, '
+                                       'which was not asked' % index,
+                              label)._replace(seen=1)
+    winner = COLOR_ALTERNATIVES[index]
+    if score < CLASSIFY_MIN_SCORE:
+        return None, Sighting(UNKNOWN, 'color', winner, score, box, 0.0, 0.0,
+                              1, 'held, but %r at %.2f is under the %.2f that '
+                                 'separates an answer from a guess'
+                              % (winner, score, CLASSIFY_MIN_SCORE), seconds)
+    return COLORS[index], Sighting(
+        PRESENT, 'color', winner, score, box, 0.0, 0.0, 1,
+        'held (%s); %r at %.2f' % (held_look.reason, winner, score), seconds)
 
 
 def as_dict(sighting):

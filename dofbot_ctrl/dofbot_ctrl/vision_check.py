@@ -6,6 +6,7 @@ Ask the arm camera one question and print the answer.
     ros2 run dofbot_ctrl vision_check -- --held
     ros2 run dofbot_ctrl vision_check -- --approach --object test_block
     ros2 run dofbot_ctrl vision_check -- --held --label 'a beer can'
+    ros2 run dofbot_ctrl vision_check -- --color
     ros2 run dofbot_ctrl vision_check -- --warm-up
 
 --warm-up asks nothing and opens no camera. It loads what nanoOWL needs for a
@@ -13,7 +14,10 @@ classification, so the first check of a pick does not time out paying for it;
 arm_server.enable_arm() runs it. It exits 0 when nanoOWL is warm and 1 when it
 could not be reached.
 
-This is the process `arm_server.is_holding()` runs. It takes no ROS parameters
+--color asks the held check and then which of red, green or blue the held can
+is, on one frame; its VERDICT line adds `color` (one of those, or null).
+
+This is the process `arm_server.is_holding()` and `held_color()` run. It takes no ROS parameters
 and builds no node -- there is nothing to plan, only a camera to open and a
 detector to ask -- but it lives behind `ros2 run` like every other command the
 arm service issues, so that one sourced workspace serves all of them.
@@ -51,6 +55,9 @@ def main(argv=None):
     which.add_argument('--approach', action='store_true',
                        help='is the object where the pick was told it is? '
                             'Meaningful only from a pre-grasp standoff')
+    which.add_argument('--color', action='store_true',
+                       help='which of %s is the held can? Asked at stow'
+                            % ', '.join(vision.COLORS))
     which.add_argument('--warm-up', action='store_true',
                        help='load nanoOWL\'s classifier now, so the first '
                             'check of a pick does not time out on it')
@@ -82,11 +89,16 @@ def main(argv=None):
               else 'nanoOWL not warmed: %s' % reason)
         return 0 if ok else 1
 
-    sighting = vision.look(check, label, url=cli.url)
+    if cli.color:
+        color, sighting = vision.held_color(label, url=cli.url)
+        verdict = dict(vision.as_dict(sighting), color=color)
+    else:
+        sighting = vision.look(check, label, url=cli.url)
+        verdict = vision.as_dict(sighting)
 
     if not cli.quiet:
         print(vision.describe(sighting))
-    print(VERDICT_PREFIX + json.dumps(vision.as_dict(sighting)))
+    print(VERDICT_PREFIX + json.dumps(verdict))
     return 0
 
 
