@@ -290,6 +290,10 @@ against them and is the test for any change to the crop or the wording.
 
 `CLASSIFY_MIN_SCORE` (0.70) is the one floor: a classification **always**
 returns a winner, so below it the answer is `unknown` rather than a verdict.
+The held check applies it to a **yes** only: any empty winner is `absent`,
+however weak, because the close-up loses only when its own score is under 0.5.
+A can that slipped out at 0.347 m read "a floor" at 0.55. As `unknown`, that
+let the pick report success with empty jaws.
 
 ### Wording a classification prompt — three rules, each bought by a wrong answer
 

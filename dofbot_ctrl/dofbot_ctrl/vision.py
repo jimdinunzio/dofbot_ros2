@@ -856,9 +856,17 @@ def look(check, label, frame=None, url=OWL_URL):
 def _look_held(label, frame, url):
     """The held check: classify the bottom-centre crop. See HELD_CROP.
 
-    PRESENT only for a confident close-up; a confident small can or floor is
-    ABSENT; anything under CLASSIFY_MIN_SCORE is UNKNOWN, so a coin flip can
-    neither abort a pick nor vouch for one. `box` is the crop, in frame pixels.
+    PRESENT only for a confident close-up. ANY empty winner is ABSENT, however
+    weak; a close-up winning under CLASSIFY_MIN_SCORE is UNKNOWN. `box` is the
+    crop, in frame pixels.
+
+    The floor is one-sided because the empty side is split two ways. An empty
+    answer that wins means the close-up lost, and when the close-up loses, its
+    own score is under 0.5 whatever the winner's is: with the winner at s it is
+    at most min(s, 1 - s). Every held frame measured won outright at
+    0.79-1.00. Seen on 2026-11-10: the can slipped out of a pick at 0.347 m,
+    'a floor' won at 0.55 with the close-up at no more than 0.45, and as
+    UNKNOWN that let the pick report success with empty jaws.
     """
     crop, box = held_crop(frame)
     index, score, seconds, reason = classify(crop, HELD_ALTERNATIVES, url=url)
@@ -868,11 +876,11 @@ def _look_held(label, frame, url):
         return _unknown('held', 'nanoOWL answered with alternative %d, which '
                                 'was not asked' % index, label)
     winner = HELD_ALTERNATIVES[index]
-    if score < CLASSIFY_MIN_SCORE:
+    holding = index == HELD_INDEX
+    if holding and score < CLASSIFY_MIN_SCORE:
         return _unknown('held', '%r at %.2f, under the %.2f that separates an '
                                 'answer from a coin flip'
                                 % (winner, score, CLASSIFY_MIN_SCORE), label)
-    holding = index == HELD_INDEX
     return Sighting(PRESENT if holding else ABSENT, 'held', label, score, box,
                     0.0, 0.0, 1 if holding else 0,
                     '%r at %.2f (bottom-centre crop)' % (winner, score),
