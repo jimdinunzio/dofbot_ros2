@@ -78,6 +78,10 @@ _REPLY_LEN = 8
 # returns as soon as a valid frame parses, and the frame is ~0.7ms on the wire.
 REPLY_TIMEOUT = 0.02
 
+# Seconds Arm_serial_set_torque waits before returning, so the position write
+# that usually follows it is not dropped. See that method.
+TORQUE_SETTLE = 0.3
+
 
 class Arm_Driver(object):
 
@@ -358,10 +362,16 @@ class Arm_Driver(object):
         # gives no sign: on 2026-10-23 servo 1 alone stayed limp through a
         # bridge restart and ignored every position after. The gap matches the
         # read retries' and costs 18 ms; callers that must be sure send twice.
+        #
+        # A servo also DROPS a position write that arrives a few ms after a
+        # torque packet (measured 2026-11-10 on the gripper: 3 of 3 ignored at
+        # a 3 ms gap, none at 300 ms), so this waits before returning rather
+        # than leave every caller to know that.
         val = 0x01 if onoff == 1 else 0x00
         for sid in range(1, 7):
             self._send(sid, _CMD_WRITE, _ADDR_TORQUE, [val])
             time.sleep(0.003)
+        time.sleep(TORQUE_SETTLE)
 
     # Set bus servo ID (broadcast). Connect only ONE servo at a time when doing this.
     def Arm_serial_set_id(self, id):
