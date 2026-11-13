@@ -33,6 +33,7 @@ setup(
             'gui_teleop = dofbot_ctrl.gui_teleop:main',
             'calibrate_zero = dofbot_ctrl.calibrate_zero:main',
             'set_torque = dofbot_ctrl.set_torque:main',
+            'check_jaws = dofbot_ctrl.check_jaws:main',
             'moveit_bridge = dofbot_ctrl.moveit_bridge:main',
             'move_to_state = dofbot_ctrl.move_to_state:main',
             'chassis_collision = dofbot_ctrl.chassis_collision:main',
