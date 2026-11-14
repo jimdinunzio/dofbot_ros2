@@ -67,9 +67,10 @@ the camera's view matches the held one it was measured at. When the question
 cannot be asked at all -- no detector running, a dark frame -- they say so and
 the pick carries on. See vision.py.
 
-then place(): trash -> open -> detach + remove -> stow. It reads what is
-attached from the planning scene, which is what lets the halves be two separate
-`ros2 run` invocations (--pick, then --place) with no process in common.
+then place(): lift -> turn to trash -> open -> detach + remove -> stow.
+It reads what is attached from the planning scene, which is what lets the
+halves be two separate `ros2 run` invocations (--pick, then --place) with no
+process in common.
 
 EXIT STATUS
 -----------
@@ -1011,6 +1012,17 @@ class PickPlace(Node):
         if not held:
             self.get_logger().warn('place() with nothing held -- releasing anyway')
 
+        # UP, THEN OVER. The bin is not in the planning scene, so a direct
+        # plan is free to swing the can through its rim on the way up -- and
+        # from stow it does, turning and rising at once. Raising to the
+        # release posture without turning first, as if the bin stood to the
+        # robot's right, brings the can to release height there; the quarter
+        # turn that follows carries it over the 0.27 m rim at that height.
+        release = NAMED_STATES[state]
+        turn = self.mc.current_joints()[0]
+        self.get_logger().info('lifting to the %r posture before turning'
+                               % state)
+        self.mc.move_joints((turn,) + tuple(release[1:]))
         self.mc.move_named(state)
         self.mc.open_gripper()
         for name in held:
@@ -1025,6 +1037,10 @@ class PickPlace(Node):
             else:
                 self.markers.hide(self.held)
             self.held = None
+        # Straight back, turning and folding at once. Only the way in is
+        # split: empty jaws start above the rim and draw in toward the base as
+        # they come down, and each split leg costs about 3 s at the speed the
+        # servos can follow.
         self.mc.move_named('stow')
         self.get_logger().info('placed%s'
                                % (' ' + ', '.join(held) if held else ''))

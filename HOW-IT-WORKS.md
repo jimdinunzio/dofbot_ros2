@@ -324,7 +324,10 @@ the can monotonically, +27 mm of base height in the first tenth of the move and
 never a dip, measured at x = 0.19, 0.20 and 0.24; `ready` has not been measured
 that way yet. Then **`move_named('stow')`** to be carried, and the held check.
 
-`place()`: `trash` → open → detach + remove → `stow`.
+`place()`: lift to the `trash` posture without turning → turn to `trash` →
+open → detach + remove → `stow`. The bin is not in the planning scene, so on
+the way in the lift comes before the turn, to carry the can over the 0.27 m
+rim rather than through it. The way back is one direct move.
 
 ---
 

@@ -188,8 +188,8 @@ NAMED_STATES = {
     # is the only joint that moved, so the height, the tilt and the joint room
     # are the ones that were measured on the arm.
     #
-    # A PLACEHOLDER FOR A DETECTED BIN, not a surveyed one. It assumes a rim
-    # below ~0.3 m, 0.167 m out in front, which is barely past the chassis; the
+    # A PLACEHOLDER FOR A DETECTED BIN, not a surveyed one. It assumes the
+    # bin's 0.27 m rim, 0.167 m out in front, which is barely past the chassis; the
     # bin's real position is to come from perception, and place() will take
     # coordinates the way pick() does. Until then this is where it drops.
     'trash':      (0.0,   0.229, -0.025,  0.942, 0.0),
