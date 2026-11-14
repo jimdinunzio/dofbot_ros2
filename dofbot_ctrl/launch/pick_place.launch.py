@@ -31,7 +31,8 @@ then, in another terminal:
     ros2 run dofbot_ctrl pick_place -- --pick 0.30 0.0 0.035
     ros2 run dofbot_ctrl pick_place -- --place
 
-This is dofbot_moveit's demo.launch.py plus moveit_bridge, with two nodes
+This is dofbot_moveit's demo.launch.py plus moveit_bridge and camera_server
+(the wrist camera, held open while the stack is up), with two nodes
 deliberately left out:
 
 - chassis_collision. Superseded. It injected the chassis and floor as runtime
@@ -49,14 +50,14 @@ moveit_bridge needs exclusive access to the serial port.
 import os
 
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
-                            LogInfo)
+from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
+                            IncludeLaunchDescription, LogInfo)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
+from launch_ros.substitutions import FindPackagePrefix, FindPackageShare
 from moveit_configs_utils import MoveItConfigsBuilder
 
 
@@ -137,5 +138,15 @@ def generate_launch_description():
                      'encoder_rate': ParameterValue(
                          LaunchConfiguration('encoder_rate'),
                          value_type=float)}]))
+
+    # The wrist camera, streaming for exactly as long as the arm is enabled, so
+    # a vision check is handed a frame instead of opening the device for one.
+    # Not a Node: it is no ROS node and would not parse the --ros-args a Node
+    # is started with. Not conditional on bridge: the camera is not a servo.
+    # If it dies the checks go back to opening the device themselves.
+    ld.add_action(ExecuteProcess(
+        cmd=[PathJoinSubstitution([FindPackagePrefix('dofbot_ctrl'), 'lib',
+                                   'dofbot_ctrl', 'camera_server'])],
+        name='camera_server', output='screen'))
 
     return ld

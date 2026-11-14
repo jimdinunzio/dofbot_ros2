@@ -563,3 +563,70 @@ def test_the_approach_gate_is_either_off_or_a_sane_fraction():
     """Survives being set: it checks the shape of whatever is there."""
     gate = vision.APPROACH_MAX_OFFSET
     assert gate is None or 0.0 < gate < 1.0
+
+
+# ------------------------------------------------------------ camera_server
+
+
+class FakeCamera:
+    """Reads frames numbered from 1 in every pixel, at 200 fps."""
+
+    def __init__(self):
+        self.reads = 0
+        self.released = False
+
+    def read(self):
+        import time
+        time.sleep(0.005)
+        self.reads += 1
+        return True, np.full((4, 6, 3), self.reads % 256, np.uint8)
+
+    def release(self):
+        self.released = True
+
+
+def serve_fake(address, warmup=3):
+    import threading
+    from dofbot_ctrl import camera_server
+
+    camera = FakeCamera()
+    stream = camera_server.Stream(lambda: camera, warmup=warmup)
+    server = camera_server.listen(address)
+    stream.start()
+    threading.Thread(target=camera_server.serve_one, args=(server, stream),
+                     daemon=True).start()
+    return camera, stream, server
+
+
+def test_a_served_frame_is_settled_and_newer_than_the_request():
+    address = '\0dofbot_test_%d_fresh' % os.getpid()
+    camera, stream, server = serve_fake(address, warmup=3)
+    try:
+        asked_at = camera.reads
+        got = vision.served_frame(address)
+        assert got.shape == (4, 6, 3)
+        assert int(got[0, 0, 0]) > max(3, asked_at + 1)
+    finally:
+        server.close()
+        stream.stop()
+    assert camera.released
+
+
+def test_no_camera_server_is_none_not_an_error():
+    assert vision.served_frame('\0dofbot_test_%d_nobody' % os.getpid()) is None
+
+
+def test_grab_prefers_the_served_frame(monkeypatch):
+    served = lit()
+    monkeypatch.setattr(vision, 'served_frame', lambda *a, **k: served)
+    monkeypatch.setattr(vision, 'open_camera',
+                        lambda *a, **k: pytest.fail('must not open the device'))
+    assert vision.grab() is served
+
+
+def test_grab_opens_the_device_when_nothing_is_served(monkeypatch):
+    camera = FakeCamera()
+    monkeypatch.setattr(vision, 'served_frame', lambda *a, **k: None)
+    monkeypatch.setattr(vision, 'open_camera', lambda *a, **k: camera)
+    assert vision.grab(warmup=4) is not None
+    assert camera.reads == 4 and camera.released

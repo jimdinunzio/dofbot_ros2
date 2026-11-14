@@ -45,6 +45,7 @@ dofbot_kinematics.py closed-form FK/IK. Pure math, no ROS. The foundation.
 gripper.py           jaw model: opening <-> angle, and where the fingers actually grip.
 graspable.py         object catalogue. Dimensions, grasp width, grip height.
 vision.py            wrist camera -> nanoOWL. present / absent / unknown.
+camera_server.py     holds the wrist camera open while the arm is enabled; vision asks it for frames.
 scene_objects.py     catalogue object -> planning-scene geometry + held pose.
 scene_markers.py     catalogue object -> RViz mesh marker. Visual only.
 moveit_client.py     DofbotMoveIt: all ROS interaction with move_group + controllers.
@@ -319,7 +320,10 @@ open-vocabulary detector on this machine. Nothing in `dofbot_ctrl` loads a
 model or touches the GPU. Two facts make it usable from here:
 
 - **It is started in `network` frame-source mode**, so it opens no camera of
-  its own. `/dev/video0` stays ours to open. (The older `tree_demo.py` grabs
+  its own. `/dev/video0` stays ours to open: `camera_server` holds it for as
+  long as `pick_place.launch.py` is up, and `vision.grab()` asks it for a
+  frame (0.26 s) rather than opening the device for one (3 s), which it still
+  does when the arm is disabled. (The older `tree_demo.py` grabs
   the camera *and* returns only annotated JPEGs, with the detections drawn on
   and then discarded — it cannot answer this question at all.)
 - **It answers with structured boxes**, and `get_detections()` reports the

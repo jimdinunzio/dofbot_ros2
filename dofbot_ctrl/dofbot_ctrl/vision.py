@@ -207,6 +207,10 @@ GPU. It is started in "network" frame source mode, meaning it does NOT open a
 camera of its own -- frames are pushed to it. That is what makes this possible
 at all: /dev/video0, the camera on the wrist, stays ours to open.
 
+While the arm is enabled camera_server holds that device open and grab() asks
+it for a frame, because opening the device costs seconds of every look. With
+the arm disabled grab() opens it itself.
+
 SHARING ONE DETECTOR
 --------------------
 The server holds ONE prompt and ONE latest-detection slot, globally, for every
@@ -229,6 +233,8 @@ can and the arm then picks it, in that order.
 
 import http.client
 import os
+import socket
+import struct
 import time
 import xmlrpc.client
 from collections import namedtuple
@@ -246,6 +252,20 @@ OWL_URL = os.environ.get('DOFBOT_OWL_URL', 'http://127.0.0.1:8000/')
 # capture index is 0. The chassis Oak-D belongs to the robot's brain and is not
 # on this machine at all.
 CAMERA_INDEX = int(os.environ.get('DOFBOT_ARM_CAMERA', '0'))
+
+# Where camera_server answers, while the arm is enabled. An abstract Unix
+# socket (the leading NUL): it has no file to go stale, and it is gone the
+# moment the server's process is, however that process ended.
+CAMERA_SOCKET = '\0dofbot_wrist_camera'
+
+# Seconds to wait on camera_server before opening the device directly. It
+# answers in two frame periods (0.26 s at the 8 fps of a dim room), so this is
+# only ever spent on a stuck one.
+CAMERA_SERVER_TIMEOUT = 2.0
+
+# The most bytes a served frame may claim to be, so a corrupt header cannot
+# ask for gigabytes. Four times the largest mode, three channels.
+MAX_SERVED_BYTES = 4 * 640 * 480 * 3
 
 # The device's largest mode. Requested, not assumed: every measure below is a
 # FRACTION of the frame actually returned, so a device that hands back
@@ -505,25 +525,91 @@ def _prompt(label):
 # --------------------------------------------------------------------- camera
 
 
+def open_camera(index=CAMERA_INDEX, size=FRAME_SIZE):
+    """The arm camera, opened and set to `size`, or None. Caller releases it.
+
+    V4L2 is asked for by name. This OpenCV build's default backend is
+    GStreamer, which takes 1.5 s to build its pipeline and rebuilds it for each
+    of the two size properties -- 6 s for a settled frame, against 3 s.
+    Measured 2026-11-12. The default is still tried if V4L2 will not open.
+    """
+    import cv2
+
+    camera = cv2.VideoCapture(index, cv2.CAP_V4L2)
+    if not camera.isOpened():
+        camera.release()
+        camera = cv2.VideoCapture(index)
+    if not camera.isOpened():
+        camera.release()
+        return None
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
+    return camera
+
+
+def _receive(conn, count):
+    """Exactly `count` bytes from a socket, or None if it closes short."""
+    data = bytearray()
+    while len(data) < count:
+        chunk = conn.recv(count - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
+
+
+def served_frame(address=CAMERA_SOCKET, timeout=CAMERA_SERVER_TIMEOUT):
+    """One BGR frame from camera_server, or None if it has none to give.
+
+    None covers no server at all, which is the ordinary state with the arm
+    disabled, and is never an error. See camera_server for the wire format.
+    """
+    import numpy
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+            conn.settimeout(timeout)
+            conn.connect(address)
+            header = _receive(conn, 12)
+            if header is None:
+                return None
+            shape = struct.unpack('!III', header)
+            count = shape[0] * shape[1] * shape[2]
+            if not 0 < count <= MAX_SERVED_BYTES:
+                return None
+            data = _receive(conn, count)
+    except OSError:
+        return None
+    if data is None:
+        return None
+    return numpy.frombuffer(data, numpy.uint8).reshape(shape)
+
+
 def grab(index=CAMERA_INDEX, size=FRAME_SIZE, warmup=WARMUP_FRAMES):
     """One settled BGR frame from the arm camera, or None.
 
-    Opens and releases the device around a single grab, deliberately. Holding
-    it open would make this the process that owns /dev/video0, and the pick,
-    `is_holding()` and `calibrate_view` are three different processes that each
-    need it for a fraction of a second.
+    Asks camera_server first, which holds the device open while the arm is
+    enabled and answers in two frame periods. With no server it opens and
+    releases the device around a single grab, at the cost of the warm-up
+    frames: the pick,
+    `is_holding()` and `calibrate_view` are three different processes, and
+    none of them may be the one that keeps /dev/video0.
+
+    While the server runs the device is busy, so if it cannot produce a frame
+    the direct open will not either and the answer is None.
 
     cv2 is imported here rather than at module scope so that the rest of this
     file -- the verdict logic and its tests -- loads on a machine without it.
     """
-    import cv2
+    if index == CAMERA_INDEX:
+        frame = served_frame()
+        if frame is not None:
+            return frame
 
-    camera = cv2.VideoCapture(index)
+    camera = open_camera(index, size)
+    if camera is None:
+        return None
     try:
-        if not camera.isOpened():
-            return None
-        camera.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
-        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
         frame = None
         for _ in range(max(1, warmup)):
             ok, image = camera.read()
