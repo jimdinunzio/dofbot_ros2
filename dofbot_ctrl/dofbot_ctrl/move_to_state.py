@@ -58,7 +58,8 @@ from rclpy.utilities import remove_ros_args
 
 from dofbot_ctrl import dofbot_kinematics as kin
 from dofbot_ctrl import scene_markers
-from dofbot_ctrl.moveit_client import NAMED_STATES, DofbotMoveIt, MoveItError
+from dofbot_ctrl.moveit_client import (NAMED_STATES, DofbotMoveIt,
+                                       MoveItError, ros_begin, ros_end)
 
 # The one line --where prints for a program to read. Everything else it prints
 # is for a human.
@@ -193,7 +194,7 @@ def main(args=None):
               % (cli.state, ', '.join(sorted(NAMED_STATES))), file=sys.stderr)
         return 2
 
-    rclpy.init(args=args)
+    began = ros_begin(args)
     node = StateMover()
     status = 0
     try:
@@ -211,8 +212,7 @@ def main(args=None):
         status = 130
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        ros_end(began)
     return status
 
 

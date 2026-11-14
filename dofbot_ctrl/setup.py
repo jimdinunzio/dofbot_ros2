@@ -39,6 +39,7 @@ setup(
             'chassis_collision = dofbot_ctrl.chassis_collision:main',
             'pick_place = dofbot_ctrl.pick_place:main',
             'camera_server = dofbot_ctrl.camera_server:main',
+            'arm_worker = dofbot_ctrl.arm_worker:main',
             'vision_check = dofbot_ctrl.vision_check:main',
             'calibrate_view = dofbot_ctrl.calibrate_view:main',
             'wave_arm = dofbot_ctrl.wave_arm:main',

@@ -38,7 +38,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 
-from dofbot_ctrl.moveit_client import NAMED_STATES, DofbotMoveIt, MoveItError
+from dofbot_ctrl.moveit_client import (NAMED_STATES, DofbotMoveIt,
+                                       MoveItError, ros_begin, ros_end)
 
 # WHERE THE ARM HOLDS ITSELF. Shoulder, elbow and wrist pitch, from
 # kin.ik_best(0.03, 0.0, 0.40, phi=0.0) on the elbow-forward branch: the tool
@@ -225,7 +226,7 @@ def main(args=None):
         print('--seconds must be positive', file=sys.stderr)
         return 2
 
-    rclpy.init(args=args)
+    began = ros_begin(args)
     node = Waver()
     status = 0
     try:
@@ -239,8 +240,7 @@ def main(args=None):
         status = 130
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        ros_end(began)
     return status
 
 

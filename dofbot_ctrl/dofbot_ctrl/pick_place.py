@@ -194,7 +194,8 @@ from dofbot_ctrl import dofbot_kinematics as kin
 from dofbot_ctrl import graspable, gripper, scene_markers, scene_objects
 from dofbot_ctrl import vision
 from dofbot_ctrl.moveit_client import (GRIPPER_LINKS, NAMED_STATES,
-                                       DofbotMoveIt, MoveItError)
+                                       DofbotMoveIt, MoveItError, ros_begin,
+                                       ros_end)
 
 # How an approach is scored, and both halves are "enough is enough". Past
 # MARGIN_ENOUGH the posture has joint room to spare; past STANDOFF_ENOUGH the
@@ -1324,7 +1325,7 @@ def main(args=None):
               file=sys.stderr)
         return 2
 
-    rclpy.init(args=args)
+    began = ros_begin(args)
     node = PickPlace()
     if cli.no_vision:
         node.set_parameters([Parameter('vision', Parameter.Type.BOOL, False)])
@@ -1376,8 +1377,7 @@ def main(args=None):
         status = 130
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        ros_end(began)
     return status
 
 

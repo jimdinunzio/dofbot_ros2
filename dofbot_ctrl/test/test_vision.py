@@ -630,3 +630,16 @@ def test_grab_opens_the_device_when_nothing_is_served(monkeypatch):
     monkeypatch.setattr(vision, 'open_camera', lambda *a, **k: camera)
     assert vision.grab(warmup=4) is not None
     assert camera.reads == 4 and camera.released
+
+
+# --------------------------------------------------------------- arm_worker
+
+
+def test_the_worker_reports_a_bad_command_line_as_its_exit_status():
+    """argparse exits the process; in the worker that must end one command."""
+    arm_worker = pytest.importorskip(
+        'dofbot_ctrl.arm_worker',
+        reason='needs rclpy and moveit_msgs; source the workspace')
+    assert arm_worker.run(['vision_check', '--no-such-flag']) == 2
+    assert arm_worker.run(['rm', '-rf']) == 2
+    assert arm_worker.run([]) == 2

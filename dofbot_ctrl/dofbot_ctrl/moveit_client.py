@@ -200,6 +200,28 @@ class MoveItError(RuntimeError):
     """A MoveIt action or service reported failure."""
 
 
+def ros_begin(args=None):
+    """rclpy.init, unless the process already holds a context. Returns
+    whether this call made it, for ros_end.
+
+    arm_worker runs these entry points one after another inside one process,
+    on one context it keeps for as long as the arm is enabled. A context is
+    what finds move_group on the network, which takes 1.5-3 s; a command that
+    made and destroyed its own would pay that every time, and that wait is
+    what the worker exists to remove.
+    """
+    if rclpy.ok():
+        return False
+    rclpy.init(args=args)
+    return True
+
+
+def ros_end(began):
+    """Shut down the context ros_begin made, and only that one."""
+    if began and rclpy.ok():
+        rclpy.shutdown()
+
+
 def _error_name(code):
     for name, value in MoveItErrorCodes.__dict__.items():
         if name.isupper() and not name.startswith('_') and value == code:

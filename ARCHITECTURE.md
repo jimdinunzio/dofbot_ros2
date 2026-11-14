@@ -62,6 +62,8 @@ gui_teleop.py          manual jogging
 calibrate_zero.py      per-servo zero offsets by encoder read
 calibrate_view.py      the two camera gates, read off a real frame
 vision_check.py        one camera question, answered on stdout; arm_server runs it
+arm_worker.py          runs those entry points back to back in one process while the arm
+                       is enabled, so a command does not spend 4 s starting up
 chassis_collision.py   SUPERSEDED — chassis/floor are real URDF links now
 ```
 
